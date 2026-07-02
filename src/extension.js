@@ -371,25 +371,42 @@ async function f_uploadToRobot(uri, isFolder) {
     const directoryPath = isFolder ? uri.fsPath : path.dirname(uri.fsPath);
     const selectedPath = uri.fsPath;
 
-    await withRobotConnection(directoryPath, 'Upload', async (client, ipAddress) => {
-        // Upload either a file or a folder
-        if (isFolder) {
-            const files = await vscode.workspace.fs.readDirectory(vscode.Uri.file(selectedPath));
-            const lsFiles = files.filter(([name, type]) => type === vscode.FileType.File && name.endsWith('.LS'));
+    await vscode.window.withProgress(
+        {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Uploading files to robot',
+            cancellable: false
+        },
+        async (progress) => {
+            await withRobotConnection(directoryPath, 'Upload', async (client, ipAddress) => {
+                // Upload either a file or a folder
+                if (isFolder) {
+                    const files = await vscode.workspace.fs.readDirectory(vscode.Uri.file(selectedPath));
+                    const lsFiles = files.filter(([name, type]) => type === vscode.FileType.File && name.endsWith('.LS'));
+                    const totalFiles = lsFiles.length;
+                    let uploadedCount = 0;
 
-            for (const [fileName] of lsFiles) {
-                const localPath = path.join(selectedPath, fileName);
-                outputChannel.appendLine(`Uploading file: ${fileName}`);
-                await client.uploadFrom(localPath, fileName);
-            }
-        } else {
-            // Single file upload
-            outputChannel.appendLine(`Uploading file: ${path.basename(selectedPath)}`);
-            await client.uploadFrom(selectedPath, path.basename(selectedPath));
+                    for (const [fileName] of lsFiles) {
+                        const localPath = path.join(selectedPath, fileName);
+                        outputChannel.appendLine(`Uploading file: ${fileName}`);
+                        await client.uploadFrom(localPath, fileName);
+                        uploadedCount++;
+                        progress.report({ 
+                            message: `${uploadedCount} of ${totalFiles} files uploaded`,
+                            increment: (1 / totalFiles) * 100
+                        });
+                    }
+                } else {
+                    // Single file upload
+                    outputChannel.appendLine(`Uploading file: ${path.basename(selectedPath)}`);
+                    await client.uploadFrom(selectedPath, path.basename(selectedPath));
+                    progress.report({ message: '1 of 1 files uploaded', increment: 100 });
+                }
+                
+                vscode.window.showInformationMessage(`File(s) uploaded successfully to ${ipAddress}`);
+            });
         }
-        
-        vscode.window.showInformationMessage(`File(s) uploaded successfully to ${ipAddress}`);
-    });
+    );
 }
 
 async function f_downloadFromRobot(destinationUri, isFolder, fileType, saveType) {
@@ -410,21 +427,44 @@ async function f_downloadFromRobot(destinationUri, isFolder, fileType, saveType)
     const dateFolderPath = path.join(destinationPath, folderName);
     fs.mkdirSync(dateFolderPath, { recursive: true });
 
-    await withRobotConnection(directoryPath, 'Download', async (client, ipAddress) => {
-        const fileList = await client.list();
+    await vscode.window.withProgress(
+        {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Downloading files from robot',
+            cancellable: false
+        },
+        async (progress) => {
+            await withRobotConnection(directoryPath, 'Download', async (client, ipAddress) => {
+                const fileList = await client.list();
+                
+                // Count matching files for progress tracking
+                const filesToDownload = fileList.filter(file => {
+                    if (!file.isFile) return false;
+                    return fileType === "*" || file.name.toLowerCase().endsWith(fileType.toLowerCase());
+                });
+                
+                const totalFiles = filesToDownload.length;
+                let downloadedCount = 0;
 
-        for (const file of fileList) {
-            if (file.isFile) {
-                if (fileType === "*" || file.name.toLowerCase().endsWith(fileType.toLowerCase())) {
-                    const localPath = path.join(dateFolderPath, file.name);
-                    outputChannel.appendLine(`Downloading file: ${file.name}`);
-                    await client.downloadTo(localPath, file.name);
+                for (const file of fileList) {
+                    if (file.isFile) {
+                        if (fileType === "*" || file.name.toLowerCase().endsWith(fileType.toLowerCase())) {
+                            const localPath = path.join(dateFolderPath, file.name);
+                            outputChannel.appendLine(`Downloading file: ${file.name}`);
+                            await client.downloadTo(localPath, file.name);
+                            downloadedCount++;
+                            progress.report({ 
+                                message: `${downloadedCount} of ${totalFiles} files downloaded`,
+                                increment: (1 / totalFiles) * 100
+                            });
+                        }
+                    }
                 }
-            }
+                
+                vscode.window.showInformationMessage(`${fileType === "*" ? "All" : fileType} files downloaded successfully to ${dateFolderPath}`);
+            });
         }
-        
-        vscode.window.showInformationMessage(`${fileType === "*" ? "All" : fileType} files downloaded successfully to ${dateFolderPath}`);
-    });
+    );
 }
 
 async function f_updateFilesFromRobot(isFolder, fileType, saveType) {
@@ -442,30 +482,54 @@ async function f_updateFilesFromRobot(isFolder, fileType, saveType) {
 
     const destinationPath = selectedFolders[0].fsPath;
 
-    await withRobotConnection(destinationPath, 'Update', async (client, ipAddress) => {
-        const fileList = await client.list();
+    await vscode.window.withProgress(
+        {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Updating files from robot',
+            cancellable: false
+        },
+        async (progress) => {
+            await withRobotConnection(destinationPath, 'Update', async (client, ipAddress) => {
+                const fileList = await client.list();
 
-        // Get the list of files already downloaded (existing in the local folder)
-        const downloadedFiles = new Set();
-        const existingFiles = fs.readdirSync(destinationPath);
-        existingFiles.forEach(file => downloadedFiles.add(file.toLowerCase()));
+                // Get the list of files already downloaded (existing in the local folder)
+                const downloadedFiles = new Set();
+                const existingFiles = fs.readdirSync(destinationPath);
+                existingFiles.forEach(file => downloadedFiles.add(file.toLowerCase()));
 
-        for (const file of fileList) {
-            if (file.isFile) {
-                if (fileType === "*" || file.name.toLowerCase().endsWith(fileType.toLowerCase())) {
-                    if (downloadedFiles.has(file.name.toLowerCase())) {
-                        const localPath = path.join(destinationPath, file.name);
-                        outputChannel.appendLine(`Updating file: ${file.name}`);
-                        await client.downloadTo(localPath, file.name);
-                    } else {
-                        outputChannel.appendLine(`File not in list, skipping: ${file.name}`);
+                // Count matching files for progress tracking
+                const filesToUpdate = fileList.filter(file => {
+                    if (!file.isFile) return false;
+                    if (fileType !== "*" && !file.name.toLowerCase().endsWith(fileType.toLowerCase())) return false;
+                    return downloadedFiles.has(file.name.toLowerCase());
+                });
+                
+                const totalFiles = filesToUpdate.length;
+                let updatedCount = 0;
+
+                for (const file of fileList) {
+                    if (file.isFile) {
+                        if (fileType === "*" || file.name.toLowerCase().endsWith(fileType.toLowerCase())) {
+                            if (downloadedFiles.has(file.name.toLowerCase())) {
+                                const localPath = path.join(destinationPath, file.name);
+                                outputChannel.appendLine(`Updating file: ${file.name}`);
+                                await client.downloadTo(localPath, file.name);
+                                updatedCount++;
+                                progress.report({ 
+                                    message: `${updatedCount} of ${totalFiles} files updated`,
+                                    increment: (1 / totalFiles) * 100
+                                });
+                            } else {
+                                outputChannel.appendLine(`File not in list, skipping: ${file.name}`);
+                            }
+                        }
                     }
                 }
-            }
-        }
 
-        vscode.window.showInformationMessage(`${fileType === "*" ? "All" : fileType} files updated successfully in ${destinationPath}`);
-    });
+                vscode.window.showInformationMessage(`${fileType === "*" ? "All" : fileType} files updated successfully in ${destinationPath}`);
+            });
+        }
+    );
 }
 
 async function f_updateSelectedFileFromRobot(uri, fileType, saveType) {
@@ -487,24 +551,35 @@ async function f_updateSelectedFileFromRobot(uri, fileType, saveType) {
     const selectedPath = uri.fsPath;
     const selectedFile = path.basename(selectedPath);
 
-    await withRobotConnection(directoryPath, 'UpdateSelected', async (client, ipAddress) => {
-        const fileList = await client.list();
+    await vscode.window.withProgress(
+        {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Downloading file from robot',
+            cancellable: false
+        },
+        async (progress) => {
+            await withRobotConnection(directoryPath, 'UpdateSelected', async (client, ipAddress) => {
+                const fileList = await client.list();
 
-        const filteredFiles = fileList.filter(file => 
-            file.isFile && (fileType === "*" || file.name.toLowerCase().endsWith(fileType.toLowerCase()))
-        );
+                const filteredFiles = fileList.filter(file => 
+                    file.isFile && (fileType === "*" || file.name.toLowerCase().endsWith(fileType.toLowerCase()))
+                );
 
-        if (filteredFiles.length === 0) {
-            vscode.window.showInformationMessage(`No files of type "${fileType}" found on the robot.`);
-            return;
+                if (filteredFiles.length === 0) {
+                    vscode.window.showInformationMessage(`No files of type "${fileType}" found on the robot.`);
+                    return;
+                }
+
+                const localPath = path.join(destinationPath, selectedFile);
+                outputChannel.appendLine(`Downloading file: ${selectedFile}`);
+                await client.downloadTo(localPath, selectedFile);
+                
+                progress.report({ message: '1 of 1 files downloaded', increment: 100 });
+
+                vscode.window.showInformationMessage(`File "${selectedFile}" downloaded successfully to ${destinationPath}`);
+            });
         }
-
-        const localPath = path.join(destinationPath, selectedFile);
-        outputChannel.appendLine(`Downloading file: ${selectedFile}`);
-        await client.downloadTo(localPath, selectedFile);
-
-        vscode.window.showInformationMessage(`File "${selectedFile}" downloaded successfully to ${destinationPath}`);
-    });
+    );
 }
 
 /**
