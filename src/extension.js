@@ -295,6 +295,7 @@ function updateInlayHints() {
 /**
  * Execute an FTP operation with proper connection management.
  * Ensures the client is ALWAYS closed, even on error.
+ * Includes connection timeout to prevent hanging.
  * 
  * @param {string} directoryPath - Directory to use for IP retrieval
  * @param {string} operationName - Name of operation for logging
@@ -304,22 +305,33 @@ function updateInlayHints() {
 async function withRobotConnection(directoryPath, operationName, callback) {
     let ipAddress;
     const client = new ftp.Client();
+    const CONNECTION_TIMEOUT = 10000; // 10 seconds timeout
     
     try {
         // Get robot IP address
         ipAddress = await getRobotIp(directoryPath);
         vscode.window.showInformationMessage(`Using IP address: ${ipAddress}`);
         
-        // Connect to robot
+        // Connect to robot with timeout
         const ftpConfig = getRobotConfig();
         client.ftp.verbose = true;
-        await client.access({
-            host: ipAddress,
-            port: ftpConfig.port,
-            user: ftpConfig.username,
-            password: ftpConfig.password,
-            secure: false
-        });
+        
+        // Create timeout promise
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error(`Connection timeout after ${CONNECTION_TIMEOUT}ms - robot not responding`)), CONNECTION_TIMEOUT)
+        );
+        
+        // Race between connection and timeout
+        await Promise.race([
+            client.access({
+                host: ipAddress,
+                port: ftpConfig.port,
+                user: ftpConfig.username,
+                password: ftpConfig.password,
+                secure: false
+            }),
+            timeoutPromise
+        ]);
 
         vscode.window.showInformationMessage('Connected to the robot.');
         
