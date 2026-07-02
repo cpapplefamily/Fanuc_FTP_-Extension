@@ -63,7 +63,42 @@ DI[1],Digital input 1
 Install the extension directly from Visual Studio Code's Extensions Marketplace.
 
 ### Configure FTP Settings:
-The extension will prompt for an IP address of the robot. The default IP is 192.168.10.124, but you can also enter a custom IP.
+The extension can be configured using VS Code settings. You can customize the FTP connection parameters:
+
+- **`robotFtp.port`** (number, default: `21`)
+  - The FTP port used by your robot (standard FTP port is 21)
+  - **Note:** Fanuc R-30iB/RoboGuide uses non-standard port **9125** - set this if using RoboGuide
+  - Set in VS Code settings: `"robotFtp.port": 21` (or `9125` for RoboGuide)
+
+- **`robotFtp.username`** (string, default: `"Administrator"`)
+  - The FTP username for your robot
+  - Set in VS Code settings: `"robotFtp.username": "Administrator"`
+
+- **`robotFtp.password`** (string, default: `""`)
+  - The FTP password for your robot (blank for RoboGuide)
+  - Set in VS Code settings: `"robotFtp.password": ""`
+
+The extension will also prompt for an IP address of the robot. The default IP is 192.168.10.124, but you can also enter a custom IP. Once entered, the IP is saved to an `ip.txt` file in your workspace.
+
+### Example Configuration (Standard Robot):
+```json
+{
+    "robotFtp.port": 21,
+    "robotFtp.username": "Administrator",
+    "robotFtp.password": ""
+}
+```
+
+### Example Configuration (RoboGuide):
+```json
+{
+    "robotFtp.port": 9125,
+    "robotFtp.username": "Administrator",
+    "robotFtp.password": ""
+}
+```
+
+Or configure via Settings UI: Search for "robotFtp" in VS Code settings.
 
 ### CSV File:
 The extension expects a CSV file with descriptions. You can either use the default descriptions.csv or select a custom CSV file using the extension.selectCSVFile command.

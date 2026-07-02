@@ -315,12 +315,14 @@ async function f_uploadToRobot(uri, isFolder) {
     const selectedPath = uri.fsPath;
 
     try {
+        const ftpConfig = getRobotConfig();
         const client = new ftp.Client();
         client.ftp.verbose = true;
         await client.access({
             host: ipAddress,
-            user: "anonymous",
-            password: "anonymous",
+            port: ftpConfig.port,
+            user: ftpConfig.username,
+            password: ftpConfig.password,
             secure: false
         });
 
@@ -387,12 +389,14 @@ async function f_downloadFromRobot(destinationUri, isFolder, fileType, saveType)
         // Ensure the folder is created
         fs.mkdirSync(dateFolderPath, { recursive: true });
 
+        const ftpConfig = getRobotConfig();
         const client = new ftp.Client();
         client.ftp.verbose = true;
         await client.access({
             host: ipAddress,
-            user: "anonymous",
-            password: "anonymous",
+            port: ftpConfig.port,
+            user: ftpConfig.username,
+            password: ftpConfig.password,
             secure: false
         });
 
@@ -451,12 +455,14 @@ async function f_updateFilesFromRobot(isFolder, fileType, saveType) {
      }
      
     try {
+        const ftpConfig = getRobotConfig();
         const client = new ftp.Client();
         client.ftp.verbose = true;
         await client.access({
             host: ipAddress,
-            user: "anonymous",
-            password: "anonymous",
+            port: ftpConfig.port,
+            user: ftpConfig.username,
+            password: ftpConfig.password,
             secure: false
         });
 
@@ -525,12 +531,14 @@ async function f_updateSelectedFileFromRobot(uri, fileType, saveType) {
     }
 
     try {
+        const ftpConfig = getRobotConfig();
         const client = new ftp.Client();
         client.ftp.verbose = true;
         await client.access({
             host: ipAddress,
-            user: "anonymous",
-            password: "anonymous",
+            port: ftpConfig.port,
+            user: ftpConfig.username,
+            password: ftpConfig.password,
             secure: false
         });
 
@@ -689,6 +697,20 @@ async function getRobotIp(directoryPath, defaultIp = "192.168.10.124") {
     }
 
     return fileIpAddress;
+}
+
+/**
+ * Get FTP configuration from VS Code settings.
+ * 
+ * @returns {Object} - Object containing port, username, and password
+ */
+function getRobotConfig() {
+    const config = vscode.workspace.getConfiguration('robotFtp');
+    return {
+        port: config.get('port', 21),
+        username: config.get('username', 'Administrator'),
+        password: config.get('password', '')
+    };
 }
 
 

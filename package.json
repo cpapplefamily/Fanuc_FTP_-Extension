@@ -3,7 +3,7 @@
   "displayName": "Robot FTP",
   "description": "VSCODE extension to FTP *.ls file to Fanuc Robot",
   "publisher": "CoreyApplegate",
-  "version": "0.3.5",
+  "version": "0.4.0-dev",
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -153,6 +153,26 @@
           "group": "fanucGet"
         }
       ]
+    },
+    "configuration": {
+      "title": "Robot FTP",
+      "properties": {
+        "robotFtp.port": {
+          "type": "number",
+          "default": 21,
+          "description": "FTP port for the robot (default: 21 for standard FTP, use 9125 for RoboGuide)"
+        },
+        "robotFtp.username": {
+          "type": "string",
+          "default": "Administrator",
+          "description": "FTP username for the robot (default: Administrator)"
+        },
+        "robotFtp.password": {
+          "type": "string",
+          "default": "",
+          "description": "FTP password for the robot (default: empty for RoboGuide)"
+        }
+      }
     }
   },
   "scripts": {
