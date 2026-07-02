@@ -292,31 +292,26 @@ function updateInlayHints() {
 
 //*****************************************************************
 //* This COde Works*/
-//*****************************************************************
-
-async function f_uploadToRobot(uri, isFolder) {
-    const directoryPath = isFolder ? uri.fsPath : path.dirname(uri.fsPath);
+/**
+ * Execute an FTP operation with proper connection management.
+ * Ensures the client is ALWAYS closed, even on error.
+ * 
+ * @param {string} directoryPath - Directory to use for IP retrieval
+ * @param {string} operationName - Name of operation for logging
+ * @param {Function} callback - Async function that receives (client, ipAddress) and performs FTP operations
+ * @returns {Promise<void>}
+ */
+async function withRobotConnection(directoryPath, operationName, callback) {
     let ipAddress;
-
+    const client = new ftp.Client();
+    
     try {
+        // Get robot IP address
         ipAddress = await getRobotIp(directoryPath);
         vscode.window.showInformationMessage(`Using IP address: ${ipAddress}`);
-        // Proceed with uploading to the robot using ipAddress
-    } catch (error) {
-        vscode.window.showErrorMessage(error.message);
-    }
-
-    
-    if (!uri || !uri.fsPath) {
-        vscode.window.showErrorMessage('Please select a file or folder to upload.');
-        return;
-    }
-
-    const selectedPath = uri.fsPath;
-
-    try {
+        
+        // Connect to robot
         const ftpConfig = getRobotConfig();
-        const client = new ftp.Client();
         client.ftp.verbose = true;
         await client.access({
             host: ipAddress,
@@ -327,13 +322,45 @@ async function f_uploadToRobot(uri, isFolder) {
         });
 
         vscode.window.showInformationMessage('Connected to the robot.');
-
-        outputChannel.appendLine("Sending FTP commands...");
-
-        // BYTE: Set binary mode
+        
+        // Set binary mode
         await client.send("TYPE I");
+        
+        outputChannel.appendLine(`${operationName}: Starting operation...`);
+        
+        // Execute the provided callback
+        await callback(client, ipAddress);
+        
+        outputChannel.appendLine("BYE: Closing connection.");
+    } catch (error) {
+        vscode.window.showErrorMessage(`Error: ${error.message}`);
+        outputChannel.appendLine(`ERROR in ${operationName}: ${error.message}`);
+    } finally {
+        // CRITICAL: Always close the connection, even on error
+        if (client) {
+            try {
+                client.close();
+            } catch (closeError) {
+                outputChannel.appendLine(`Warning: Error closing connection: ${closeError.message}`);
+            }
+        }
+    }
+}
 
-        // Upload either a file or a folder based on `isFolder` flag
+/**
+ * Upload a file or folder to the robot.
+ */
+async function f_uploadToRobot(uri, isFolder) {
+    if (!uri || !uri.fsPath) {
+        vscode.window.showErrorMessage('Please select a file or folder to upload.');
+        return;
+    }
+
+    const directoryPath = isFolder ? uri.fsPath : path.dirname(uri.fsPath);
+    const selectedPath = uri.fsPath;
+
+    await withRobotConnection(directoryPath, 'Upload', async (client, ipAddress) => {
+        // Upload either a file or a folder
         if (isFolder) {
             const files = await vscode.workspace.fs.readDirectory(vscode.Uri.file(selectedPath));
             const lsFiles = files.filter(([name, type]) => type === vscode.FileType.File && name.endsWith('.LS'));
@@ -344,37 +371,22 @@ async function f_uploadToRobot(uri, isFolder) {
                 await client.uploadFrom(localPath, fileName);
             }
         } else {
-            // If it's a single .LS file
+            // Single file upload
             outputChannel.appendLine(`Uploading file: ${path.basename(selectedPath)}`);
             await client.uploadFrom(selectedPath, path.basename(selectedPath));
         }
-
-        outputChannel.appendLine("BYE: Closing connection.");
-        client.close();
         
         vscode.window.showInformationMessage(`File(s) uploaded successfully to ${ipAddress}`);
-    } catch (error) {
-        vscode.window.showErrorMessage(`Error: ${error.message}`);
-    }
+    });
 }
 
 async function f_downloadFromRobot(destinationUri, isFolder, fileType, saveType) {
     const directoryPath = isFolder ? destinationUri.fsPath : path.dirname(destinationUri.fsPath);
-    let ipAddress;
-
-    try {
-        ipAddress = await getRobotIp(directoryPath);
-        vscode.window.showInformationMessage(`Using IP address: ${ipAddress}`);
-        // Proceed with uploading to the robot using ipAddress
-    } catch (error) {
-        vscode.window.showErrorMessage(error.message);
-    }
-
     const destinationPath = destinationUri.fsPath;
 
     // Create a subfolder labeled with today's date and handle existing folders
     const today = new Date();
-    const baseFolderName = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`+ "-" + saveType;
+    const baseFolderName = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}` + "-" + saveType;
     let counter = 1;
     let folderName = `${baseFolderName}_${String(counter).padStart(2, '0')}`;
 
@@ -383,52 +395,27 @@ async function f_downloadFromRobot(destinationUri, isFolder, fileType, saveType)
         counter++;
     }
 
-    const dateFolderPath = path.join(destinationPath, folderName );
+    const dateFolderPath = path.join(destinationPath, folderName);
+    fs.mkdirSync(dateFolderPath, { recursive: true });
 
-    try {
-        // Ensure the folder is created
-        fs.mkdirSync(dateFolderPath, { recursive: true });
-
-        const ftpConfig = getRobotConfig();
-        const client = new ftp.Client();
-        client.ftp.verbose = true;
-        await client.access({
-            host: ipAddress,
-            port: ftpConfig.port,
-            user: ftpConfig.username,
-            password: ftpConfig.password,
-            secure: false
-        });
-
-        vscode.window.showInformationMessage("Connected to the robot.");
-
-        outputChannel.appendLine("Fetching files from robot...");
-
+    await withRobotConnection(directoryPath, 'Download', async (client, ipAddress) => {
         const fileList = await client.list();
 
         for (const file of fileList) {
-            // If the wildcard "*" is passed, download all files, otherwise filter by extension
             if (file.isFile) {
                 if (fileType === "*" || file.name.toLowerCase().endsWith(fileType.toLowerCase())) {
                     const localPath = path.join(dateFolderPath, file.name);
-
                     outputChannel.appendLine(`Downloading file: ${file.name}`);
                     await client.downloadTo(localPath, file.name);
                 }
             }
         }
         
-        outputChannel.appendLine("BYE: Closing connection.");
-        client.close();
-
         vscode.window.showInformationMessage(`${fileType === "*" ? "All" : fileType} files downloaded successfully to ${dateFolderPath}`);
-    } catch (error) {
-        vscode.window.showErrorMessage(`Error: ${error.message}`);
-    }
+    });
 }
 
 async function f_updateFilesFromRobot(isFolder, fileType, saveType) {
-    // Get the selected folder in the Explorer window
     const selectedFolders = await vscode.window.showOpenDialog({
         canSelectFolders: true,
         canSelectFiles: false,
@@ -441,36 +428,9 @@ async function f_updateFilesFromRobot(isFolder, fileType, saveType) {
         return;
     }
 
-    // Use the selected folder
-     // Use the selected folder
-     const destinationPath = selectedFolders[0].fsPath;
+    const destinationPath = selectedFolders[0].fsPath;
 
-     let ipAddress;
-     try {
-         // Retrieve IP address using the reusable function
-         ipAddress = await getRobotIp(destinationPath);
-     } catch (error) {
-         vscode.window.showErrorMessage(`Failed to retrieve IP address: ${error.message}`);
-         return; // Exit the function if IP retrieval fails
-     }
-     
-    try {
-        const ftpConfig = getRobotConfig();
-        const client = new ftp.Client();
-        client.ftp.verbose = true;
-        await client.access({
-            host: ipAddress,
-            port: ftpConfig.port,
-            user: ftpConfig.username,
-            password: ftpConfig.password,
-            secure: false
-        });
-
-        vscode.window.showInformationMessage("Connected to the robot.");
-
-        outputChannel.appendLine("Fetching files from robot...");
-        outputChannel.appendLine("Fetching files from robot...");
-
+    await withRobotConnection(destinationPath, 'Update', async (client, ipAddress) => {
         const fileList = await client.list();
 
         // Get the list of files already downloaded (existing in the local folder)
@@ -479,34 +439,26 @@ async function f_updateFilesFromRobot(isFolder, fileType, saveType) {
         existingFiles.forEach(file => downloadedFiles.add(file.toLowerCase()));
 
         for (const file of fileList) {
-            // If the wildcard "*" is passed, download all files, otherwise filter by extension
             if (file.isFile) {
                 if (fileType === "*" || file.name.toLowerCase().endsWith(fileType.toLowerCase())) {
                     if (downloadedFiles.has(file.name.toLowerCase())) {
                         const localPath = path.join(destinationPath, file.name);
                         outputChannel.appendLine(`Updating file: ${file.name}`);
                         await client.downloadTo(localPath, file.name);
-                        continue;
-                    }else{
-                        outputChannel.appendLine(`File Not in list, skipping: ${file.name}`);
-                        continue;
+                    } else {
+                        outputChannel.appendLine(`File not in list, skipping: ${file.name}`);
                     }
                 }
             }
         }
 
-        outputChannel.appendLine("BYE: Closing connection.");
-        client.close();
-
-        vscode.window.showInformationMessage(`${fileType === "*" ? "All" : fileType} files downloaded successfully to ${destinationPath}`);
-    } catch (error) {
-        vscode.window.showErrorMessage(`Error: ${error.message}`);
-    }
+        vscode.window.showInformationMessage(`${fileType === "*" ? "All" : fileType} files updated successfully in ${destinationPath}`);
+    });
 }
 
 async function f_updateSelectedFileFromRobot(uri, fileType, saveType) {
-    const directoryPath = false ? uri.fsPath : path.dirname(uri.fsPath);
-    // Select the destination folder
+    const directoryPath = path.dirname(uri.fsPath);
+
     const selectedFolder = await vscode.window.showOpenDialog({
         canSelectFolders: true,
         canSelectFiles: false,
@@ -520,59 +472,18 @@ async function f_updateSelectedFileFromRobot(uri, fileType, saveType) {
     }
 
     const destinationPath = selectedFolder[0].fsPath;
+    const selectedPath = uri.fsPath;
+    const selectedFile = path.basename(selectedPath);
 
-    let ipAddress;
-    try {
-        // Retrieve IP address using the reusable function
-        ipAddress = await getRobotIp(destinationPath);
-    } catch (error) {
-        vscode.window.showErrorMessage(`Failed to retrieve IP address: ${error.message}`);
-        return;
-    }
-
-    try {
-        const ftpConfig = getRobotConfig();
-        const client = new ftp.Client();
-        client.ftp.verbose = true;
-        await client.access({
-            host: ipAddress,
-            port: ftpConfig.port,
-            user: ftpConfig.username,
-            password: ftpConfig.password,
-            secure: false
-        });
-
-        vscode.window.showInformationMessage("Connected to the robot.");
-
-        const selectedPath = uri.fsPath;
-
-        outputChannel.appendLine(`Uploading (*** Selected ***) file: ${path.basename(selectedPath)}`);
-
-        outputChannel.appendLine("Fetching file list from robot...");
-
+    await withRobotConnection(directoryPath, 'UpdateSelected', async (client, ipAddress) => {
         const fileList = await client.list();
 
-        // Filter files based on the provided fileType
         const filteredFiles = fileList.filter(file => 
             file.isFile && (fileType === "*" || file.name.toLowerCase().endsWith(fileType.toLowerCase()))
         );
 
         if (filteredFiles.length === 0) {
             vscode.window.showInformationMessage(`No files of type "${fileType}" found on the robot.`);
-            client.close();
-            return;
-        }
-
-        // Let the user select a file from the filtered list
-        const selectedFile = path.basename(selectedPath)
-        /* const selectedFile = await vscode.window.showQuickPick(
-            filteredFiles.map(file => file.name), 
-            { placeHolder: "Select a file to download from the robot" }
-        ); */
-
-        if (!selectedFile) {
-            vscode.window.showErrorMessage("No file selected.");
-            client.close();
             return;
         }
 
@@ -580,13 +491,8 @@ async function f_updateSelectedFileFromRobot(uri, fileType, saveType) {
         outputChannel.appendLine(`Downloading file: ${selectedFile}`);
         await client.downloadTo(localPath, selectedFile);
 
-        outputChannel.appendLine("Download complete.");
         vscode.window.showInformationMessage(`File "${selectedFile}" downloaded successfully to ${destinationPath}`);
-
-        client.close();
-    } catch (error) {
-        vscode.window.showErrorMessage(`Error: ${error.message}`);
-    }
+    });
 }
 
 /**
