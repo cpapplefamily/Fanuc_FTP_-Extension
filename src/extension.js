@@ -681,6 +681,90 @@ async function f_updateSelectedFileFromRobot(uri, fileType) {
     );
 }
 
+const IP_PATTERN = /^(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)$/;
+const RECENT_IPS_FILE = 'recent-ips.json';
+const MAX_RECENT_IPS = 5;
+
+function getRecentIpsFilePath(directoryPath) {
+    return path.join(directoryPath, RECENT_IPS_FILE);
+}
+
+function ensureRecentIpsFile(directoryPath) {
+    const recentIpsPath = getRecentIpsFilePath(directoryPath);
+
+    if (fs.existsSync(recentIpsPath)) {
+        return;
+    }
+
+    try {
+        fs.mkdirSync(directoryPath, { recursive: true });
+        fs.writeFileSync(recentIpsPath, JSON.stringify([], null, 2), 'utf8');
+        outputChannel.appendLine(`${RECENT_IPS_FILE} created at ${recentIpsPath}`);
+    } catch (error) {
+        outputChannel.appendLine(`Warning: Failed to create ${RECENT_IPS_FILE}: ${error.message}`);
+    }
+}
+
+function readRecentIps(directoryPath) {
+    ensureRecentIpsFile(directoryPath);
+    const recentIpsPath = getRecentIpsFilePath(directoryPath);
+
+    if (!fs.existsSync(recentIpsPath)) {
+        return [];
+    }
+
+    try {
+        const recentIps = JSON.parse(fs.readFileSync(recentIpsPath, 'utf8'));
+        if (!Array.isArray(recentIps)) {
+            outputChannel.appendLine(`${RECENT_IPS_FILE} is not an array. Ignoring recent IP history.`);
+            return [];
+        }
+
+        return recentIps.filter(ip => typeof ip === 'string' && IP_PATTERN.test(ip)).slice(0, MAX_RECENT_IPS);
+    } catch (error) {
+        outputChannel.appendLine(`Warning: Failed to read ${RECENT_IPS_FILE}: ${error.message}`);
+        return [];
+    }
+}
+
+function saveRecentIp(directoryPath, ipAddress) {
+    if (!IP_PATTERN.test(ipAddress)) {
+        return;
+    }
+
+    try {
+        fs.mkdirSync(directoryPath, { recursive: true });
+        const recentIps = readRecentIps(directoryPath);
+        const updatedIps = [
+            ipAddress,
+            ...recentIps.filter(recentIp => recentIp !== ipAddress)
+        ].slice(0, MAX_RECENT_IPS);
+
+        fs.writeFileSync(getRecentIpsFilePath(directoryPath), JSON.stringify(updatedIps, null, 2), 'utf8');
+        outputChannel.appendLine(`Recent robot IPs updated: ${updatedIps.join(', ')}`);
+    } catch (error) {
+        outputChannel.appendLine(`Warning: Failed to save recent IP history: ${error.message}`);
+    }
+}
+
+function buildIpOptions(directoryPath, defaultIp) {
+    const builtInOptions = [
+        { label: defaultIp, description: 'Default IP address' },
+        { label: "192.168.95.112", description: 'Aggressive Hydraulics' },
+        { label: "127.0.0.2", description: 'RoboGuide LoopBack' }
+    ];
+    const optionLabels = new Set(builtInOptions.map(option => option.label));
+    const recentOptions = readRecentIps(directoryPath)
+        .filter(ipAddress => !optionLabels.has(ipAddress))
+        .map(ipAddress => ({ label: ipAddress, description: 'Recent robot IP' }));
+
+    return [
+        ...recentOptions,
+        ...builtInOptions,
+        { label: 'Other', description: 'Enter a custom IP address' }
+    ];
+}
+
 /**
  * Retrieve or prompt for the robot's IP address.
  * 
@@ -699,7 +783,12 @@ async function getRobotIp(directoryPath, defaultIp = "192.168.10.124") {
         try {
             const fileContent = fs.readFileSync(filePath, 'utf8').trim();
             if (fileContent) {
-                fileIpAddress = fileContent;
+                if (IP_PATTERN.test(fileContent)) {
+                    fileIpAddress = fileContent;
+                    saveRecentIp(directoryPath, fileIpAddress);
+                } else {
+                    vscode.window.showWarningMessage(`The file ${fileName} contains an invalid IP address.`);
+                }
             } else {
                 vscode.window.showWarningMessage(`The file ${fileName} is empty.`);
             }
@@ -724,8 +813,7 @@ async function getRobotIp(directoryPath, defaultIp = "192.168.10.124") {
                 placeHolder: `e.g., ${defaultIp}`,
                 value: defaultIp,
                 validateInput: value => {
-                    const ipPattern = /^(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)$/;
-                    return ipPattern.test(value) ? null : 'Please enter a valid IP address.';
+                    return IP_PATTERN.test(value) ? null : 'Please enter a valid IP address.';
                 }
             });
 
@@ -737,6 +825,7 @@ async function getRobotIp(directoryPath, defaultIp = "192.168.10.124") {
                     fs.writeFileSync(filePath, newIp, 'utf8');
                     vscode.window.showInformationMessage(`File ${fileName} created at ${filePath} with IP address: ${newIp}`);
                     fileIpAddress = newIp;
+                    saveRecentIp(directoryPath, fileIpAddress);
                 } catch (error) {
                     vscode.window.showErrorMessage(`Failed to create ${fileName}: ${error.message}`);
                 }
@@ -750,15 +839,10 @@ async function getRobotIp(directoryPath, defaultIp = "192.168.10.124") {
 
     if (!fileIpAddress) {
         // Prompt user to select or enter an IP address if no IP is retrieved from the file
-        const ipOptions = [
-            { label: defaultIp, description: 'Default IP address' },
-            { label: "192.168.95.112", description: 'Aggressive Hydraulics' },
-            { label: "127.0.0.2", description: 'RoboGuide LoopBack' },
-            { label: 'Other', description: 'Enter a custom IP address' }
-        ];
+        const ipOptions = buildIpOptions(directoryPath, defaultIp);
 
         const selectedIp = await vscode.window.showQuickPick(ipOptions, {
-            placeHolder: 'Select the robot\'s IP address or choose "Other" to enter a custom IP.',
+            placeHolder: 'Select a recent robot IP or choose "Other" to enter a custom IP.',
             canPickMany: false
         });
 
@@ -773,8 +857,7 @@ async function getRobotIp(directoryPath, defaultIp = "192.168.10.124") {
                 prompt: 'Enter the custom IP address:',
                 placeHolder: 'e.g., 192.168.1.1',
                 validateInput: value => {
-                    const ipPattern = /^(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)$/;
-                    return ipPattern.test(value) ? null : 'Please enter a valid IP address.';
+                    return IP_PATTERN.test(value) ? null : 'Please enter a valid IP address.';
                 }
             });
 
@@ -785,6 +868,7 @@ async function getRobotIp(directoryPath, defaultIp = "192.168.10.124") {
             ipAddress = customIp;
         }
 
+        saveRecentIp(directoryPath, ipAddress);
         return ipAddress;
     }
 

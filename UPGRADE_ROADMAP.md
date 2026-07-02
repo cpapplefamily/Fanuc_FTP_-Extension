@@ -26,9 +26,9 @@ This document outlines potential upgrades and enhancements for future versions o
   - Benefit: Prevent accidental data loss
 
 ### Priority: MEDIUM - User Experience
-- [ ] **Recent IPs History**: Remember last 5 robot IPs used
-  - Current: Single IP from ip.txt or default
-  - Proposed: Quick pick from recent IPs
+- [x] **Recent IPs History**: Remember last 5 robot IPs used
+  - Implemented: Creates and uses `recent-ips.json` alongside `ip.txt`
+  - Result: Quick pick shows recent IPs first
   - Benefit: Faster switching between robots
   
 - [ ] **Sidebar File Browser**: VS Code sidebar view showing robot files

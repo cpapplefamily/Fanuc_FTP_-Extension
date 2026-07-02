@@ -80,7 +80,7 @@ The extension can be configured using VS Code settings. You can customize the FT
   - The FTP password for your robot (blank for RoboGuide)
   - Set in VS Code settings: `"robotFtp.password": ""`
 
-The extension will also prompt for an IP address of the robot. The default IP is 192.168.10.124, but you can also enter a custom IP. Once entered, the IP is saved to an `ip.txt` file in your workspace.
+The extension will also prompt for an IP address of the robot. The default IP is 192.168.10.124, but you can also enter a custom IP. Once entered, the IP is saved to an `ip.txt` file in your workspace. The extension also creates `recent-ips.json` next to `ip.txt`, keeps the last five valid robot IPs there, and shows them first the next time you choose an IP.
 
 ### Example Configuration (Standard Robot):
 ```json
