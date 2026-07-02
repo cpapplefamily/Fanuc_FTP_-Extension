@@ -148,6 +148,7 @@ async function activate(context) {
     const listLsFilesAndInsert_Function = vscode.commands.registerCommand(
         "extension.listLsFilesAndInsert",
         async () => {
+            outputChannel.appendLine('listLsFilesAndInsert_Function');
             const editor = vscode.window.activeTextEditor;
             if (!editor) {
                 vscode.window.showErrorMessage("No active editor found.");
