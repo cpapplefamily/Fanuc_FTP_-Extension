@@ -48,11 +48,11 @@ async function activate(context) {
     });
     
     const updateLsFilesFromRobot_Function = vscode.commands.registerCommand("extension.updateFilesFromRobotLsFiles", async () => {
-        await f_updateFilesFromRobot( true, ".ls", "LS"); // Pass true for folder operations
+        await f_updateFilesFromRobot(".ls");
     });
 
     const updateSelectedFileFromRobot_Function = vscode.commands.registerCommand("extension.updateSelectedFileFromRobot", async (uri) => {
-        await f_updateSelectedFileFromRobot(uri, ".ls", "LS"); // Pass true for folder operations
+        await f_updateSelectedFileFromRobot(uri, ".ls");
     });
 
 
@@ -108,7 +108,7 @@ async function activate(context) {
 
     // Register inlay hints provider
     const provider = vscode.languages.registerInlayHintsProvider('*', {
-    provideInlayHints(document, range, token) {
+    provideInlayHints(document, range) {
         const hints = [];
         const regex = /\b(?:do|DI|R|F)\[(\d+)\]/gi;
 
@@ -290,6 +290,60 @@ function updateInlayHints() {
     }
 }
 
+function formatBytes(bytes) {
+    if (!Number.isFinite(bytes) || bytes <= 0) {
+        return '0 B';
+    }
+
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let value = bytes;
+    let unitIndex = 0;
+
+    while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex++;
+    }
+
+    return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function getFileSize(filePath) {
+    try {
+        return fs.statSync(filePath).size;
+    } catch (error) {
+        outputChannel.appendLine(`Warning: Could not read size for ${filePath}: ${error.message}`);
+        return 0;
+    }
+}
+
+function trackTransferProgress(client, progress, totalBytes, actionLabel) {
+    let lastPercent = 0;
+
+    client.trackProgress((info) => {
+        if (totalBytes > 0) {
+            const percent = Math.min(100, (info.bytesOverall / totalBytes) * 100);
+            const increment = Math.max(0, percent - lastPercent);
+            lastPercent = percent;
+
+            progress.report({
+                message: `${actionLabel} ${formatBytes(info.bytesOverall)} of ${formatBytes(totalBytes)} (${Math.floor(percent)}%)`,
+                increment
+            });
+        } else {
+            progress.report({
+                message: `${actionLabel} ${formatBytes(info.bytesOverall)}`
+            });
+        }
+    });
+
+    return (message) => {
+        progress.report({
+            message,
+            increment: Math.max(0, 100 - lastPercent)
+        });
+    };
+}
+
 //*****************************************************************
 //* This COde Works*/
 /**
@@ -382,25 +436,42 @@ async function f_uploadToRobot(uri, isFolder) {
                 // Upload either a file or a folder
                 if (isFolder) {
                     const files = await vscode.workspace.fs.readDirectory(vscode.Uri.file(selectedPath));
-                    const lsFiles = files.filter(([name, type]) => type === vscode.FileType.File && name.endsWith('.LS'));
+                    const lsFiles = files.filter(([name, type]) => type === vscode.FileType.File && name.toLowerCase().endsWith('.ls'));
                     const totalFiles = lsFiles.length;
                     let uploadedCount = 0;
+                    const totalBytes = lsFiles.reduce((sum, [fileName]) => sum + getFileSize(path.join(selectedPath, fileName)), 0);
 
-                    for (const [fileName] of lsFiles) {
-                        const localPath = path.join(selectedPath, fileName);
-                        outputChannel.appendLine(`Uploading file: ${fileName}`);
-                        await client.uploadFrom(localPath, fileName);
-                        uploadedCount++;
-                        progress.report({ 
-                            message: `${uploadedCount} of ${totalFiles} files uploaded`,
-                            increment: (1 / totalFiles) * 100
-                        });
+                    if (totalFiles === 0) {
+                        vscode.window.showInformationMessage('No .LS files found in the selected folder.');
+                        return;
+                    }
+
+                    try {
+                        const completeProgress = trackTransferProgress(client, progress, totalBytes, 'Uploading');
+
+                        for (const [fileName] of lsFiles) {
+                            const localPath = path.join(selectedPath, fileName);
+                            outputChannel.appendLine(`Uploading file: ${fileName}`);
+                            await client.uploadFrom(localPath, fileName);
+                            uploadedCount++;
+                            outputChannel.appendLine(`Uploaded ${uploadedCount} of ${totalFiles}: ${fileName}`);
+                        }
+
+                        completeProgress(`${uploadedCount} of ${totalFiles} files uploaded`);
+                    } finally {
+                        client.trackProgress();
                     }
                 } else {
                     // Single file upload
+                    const totalBytes = getFileSize(selectedPath);
                     outputChannel.appendLine(`Uploading file: ${path.basename(selectedPath)}`);
-                    await client.uploadFrom(selectedPath, path.basename(selectedPath));
-                    progress.report({ message: '1 of 1 files uploaded', increment: 100 });
+                    try {
+                        const completeProgress = trackTransferProgress(client, progress, totalBytes, 'Uploading');
+                        await client.uploadFrom(selectedPath, path.basename(selectedPath));
+                        completeProgress('Upload complete');
+                    } finally {
+                        client.trackProgress();
+                    }
                 }
                 
                 vscode.window.showInformationMessage(`File(s) uploaded successfully to ${ipAddress}`);
@@ -434,7 +505,7 @@ async function f_downloadFromRobot(destinationUri, isFolder, fileType, saveType)
             cancellable: false
         },
         async (progress) => {
-            await withRobotConnection(directoryPath, 'Download', async (client, ipAddress) => {
+            await withRobotConnection(directoryPath, 'Download', async (client) => {
                 const fileList = await client.list();
                 
                 // Count matching files for progress tracking
@@ -445,20 +516,27 @@ async function f_downloadFromRobot(destinationUri, isFolder, fileType, saveType)
                 
                 const totalFiles = filesToDownload.length;
                 let downloadedCount = 0;
+                const totalBytes = filesToDownload.reduce((sum, file) => sum + (file.size || 0), 0);
 
-                for (const file of fileList) {
-                    if (file.isFile) {
-                        if (fileType === "*" || file.name.toLowerCase().endsWith(fileType.toLowerCase())) {
-                            const localPath = path.join(dateFolderPath, file.name);
-                            outputChannel.appendLine(`Downloading file: ${file.name}`);
-                            await client.downloadTo(localPath, file.name);
-                            downloadedCount++;
-                            progress.report({ 
-                                message: `${downloadedCount} of ${totalFiles} files downloaded`,
-                                increment: (1 / totalFiles) * 100
-                            });
-                        }
+                if (totalFiles === 0) {
+                    vscode.window.showInformationMessage(`No ${fileType === "*" ? "matching" : fileType} files found on the robot.`);
+                    return;
+                }
+
+                try {
+                    const completeProgress = trackTransferProgress(client, progress, totalBytes, 'Downloading');
+
+                    for (const file of filesToDownload) {
+                        const localPath = path.join(dateFolderPath, file.name);
+                        outputChannel.appendLine(`Downloading file: ${file.name}`);
+                        await client.downloadTo(localPath, file.name);
+                        downloadedCount++;
+                        outputChannel.appendLine(`Downloaded ${downloadedCount} of ${totalFiles}: ${file.name}`);
                     }
+
+                    completeProgress(`${downloadedCount} of ${totalFiles} files downloaded`);
+                } finally {
+                    client.trackProgress();
                 }
                 
                 vscode.window.showInformationMessage(`${fileType === "*" ? "All" : fileType} files downloaded successfully to ${dateFolderPath}`);
@@ -467,7 +545,7 @@ async function f_downloadFromRobot(destinationUri, isFolder, fileType, saveType)
     );
 }
 
-async function f_updateFilesFromRobot(isFolder, fileType, saveType) {
+async function f_updateFilesFromRobot(fileType) {
     const selectedFolders = await vscode.window.showOpenDialog({
         canSelectFolders: true,
         canSelectFiles: false,
@@ -489,7 +567,7 @@ async function f_updateFilesFromRobot(isFolder, fileType, saveType) {
             cancellable: false
         },
         async (progress) => {
-            await withRobotConnection(destinationPath, 'Update', async (client, ipAddress) => {
+            await withRobotConnection(destinationPath, 'Update', async (client) => {
                 const fileList = await client.list();
 
                 // Get the list of files already downloaded (existing in the local folder)
@@ -506,24 +584,34 @@ async function f_updateFilesFromRobot(isFolder, fileType, saveType) {
                 
                 const totalFiles = filesToUpdate.length;
                 let updatedCount = 0;
+                const totalBytes = filesToUpdate.reduce((sum, file) => sum + (file.size || 0), 0);
 
-                for (const file of fileList) {
-                    if (file.isFile) {
-                        if (fileType === "*" || file.name.toLowerCase().endsWith(fileType.toLowerCase())) {
-                            if (downloadedFiles.has(file.name.toLowerCase())) {
-                                const localPath = path.join(destinationPath, file.name);
-                                outputChannel.appendLine(`Updating file: ${file.name}`);
-                                await client.downloadTo(localPath, file.name);
-                                updatedCount++;
-                                progress.report({ 
-                                    message: `${updatedCount} of ${totalFiles} files updated`,
-                                    increment: (1 / totalFiles) * 100
-                                });
-                            } else {
+                if (totalFiles === 0) {
+                    vscode.window.showInformationMessage(`No existing ${fileType === "*" ? "matching" : fileType} files found to update in ${destinationPath}`);
+                    return;
+                }
+
+                try {
+                    const completeProgress = trackTransferProgress(client, progress, totalBytes, 'Updating');
+
+                    for (const file of fileList) {
+                        if (file.isFile && (fileType === "*" || file.name.toLowerCase().endsWith(fileType.toLowerCase()))) {
+                            if (!downloadedFiles.has(file.name.toLowerCase())) {
                                 outputChannel.appendLine(`File not in list, skipping: ${file.name}`);
+                                continue;
                             }
+
+                            const localPath = path.join(destinationPath, file.name);
+                            outputChannel.appendLine(`Updating file: ${file.name}`);
+                            await client.downloadTo(localPath, file.name);
+                            updatedCount++;
+                            outputChannel.appendLine(`Updated ${updatedCount} of ${totalFiles}: ${file.name}`);
                         }
                     }
+
+                    completeProgress(`${updatedCount} of ${totalFiles} files updated`);
+                } finally {
+                    client.trackProgress();
                 }
 
                 vscode.window.showInformationMessage(`${fileType === "*" ? "All" : fileType} files updated successfully in ${destinationPath}`);
@@ -532,7 +620,7 @@ async function f_updateFilesFromRobot(isFolder, fileType, saveType) {
     );
 }
 
-async function f_updateSelectedFileFromRobot(uri, fileType, saveType) {
+async function f_updateSelectedFileFromRobot(uri, fileType) {
     const directoryPath = path.dirname(uri.fsPath);
 
     const selectedFolder = await vscode.window.showOpenDialog({
@@ -558,7 +646,7 @@ async function f_updateSelectedFileFromRobot(uri, fileType, saveType) {
             cancellable: false
         },
         async (progress) => {
-            await withRobotConnection(directoryPath, 'UpdateSelected', async (client, ipAddress) => {
+            await withRobotConnection(directoryPath, 'UpdateSelected', async (client) => {
                 const fileList = await client.list();
 
                 const filteredFiles = fileList.filter(file => 
@@ -570,11 +658,22 @@ async function f_updateSelectedFileFromRobot(uri, fileType, saveType) {
                     return;
                 }
 
+                const remoteFile = filteredFiles.find(file => file.name.toLowerCase() === selectedFile.toLowerCase());
+
+                if (!remoteFile) {
+                    vscode.window.showInformationMessage(`File "${selectedFile}" was not found on the robot.`);
+                    return;
+                }
+
                 const localPath = path.join(destinationPath, selectedFile);
                 outputChannel.appendLine(`Downloading file: ${selectedFile}`);
-                await client.downloadTo(localPath, selectedFile);
-                
-                progress.report({ message: '1 of 1 files downloaded', increment: 100 });
+                try {
+                    const completeProgress = trackTransferProgress(client, progress, remoteFile.size || 0, 'Downloading');
+                    await client.downloadTo(localPath, remoteFile.name);
+                    completeProgress('Download complete');
+                } finally {
+                    client.trackProgress();
+                }
 
                 vscode.window.showInformationMessage(`File "${selectedFile}" downloaded successfully to ${destinationPath}`);
             });

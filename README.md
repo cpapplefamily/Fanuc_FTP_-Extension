@@ -9,9 +9,11 @@ This Visual Studio Code extension allows you to interact with a Fanuc robot via 
 - Download all files from the robot.
 - Download `.ls` files from the robot.
 - Update files from the robot into a selected folder.
+- Show byte-level progress while large files are downloading.
 
 ### Upload Files:
 - Upload individual files or folders to the robot.
+- Show byte-level progress while large files are uploading.
 
 ### CSV Descriptions:
 - Select and load a CSV file that contains descriptions for robot programs.
