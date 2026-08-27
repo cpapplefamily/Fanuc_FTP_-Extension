@@ -3,14 +3,264 @@ const ftp = require('basic-ftp');
 const path = require('path');
 const fs = require('fs');
 const csv = require('csv-parser'); // Install csv-parser for reading CSV files
+const {
+    loadSnippetDefinitions,
+    PROJECT_SNIPPETS_TEMPLATE,
+    USER_SNIPPETS_TEMPLATE
+} = require('./externalSnippets');
 
 const outputChannel = vscode.window.createOutputChannel("Robot File Sync");
+
+const EXTERNAL_SNIPPETS_STATE_KEY = 'robotFtp.externalSnippetsPath';
+const EXTERNAL_SNIPPETS_CONFIG_KEY = 'externalSnippetsFile';
+const USER_SNIPPETS_FILENAME = 'fanuc-snippets.code-snippets';
+let managedSnippetDefinitions = [];
+let externalSnippetDefinitions = [];
+let externalSnippetWatcher;
+
+function ensureManagedSnippetFile(context) {
+    const snippetFilePath = path.join(context.globalStorageUri.fsPath, USER_SNIPPETS_FILENAME);
+    fs.mkdirSync(context.globalStorageUri.fsPath, { recursive: true });
+
+    if (!fs.existsSync(snippetFilePath)) {
+        fs.writeFileSync(snippetFilePath, USER_SNIPPETS_TEMPLATE, 'utf8');
+        outputChannel.appendLine(`Created managed Fanuc snippet file at ${snippetFilePath}`);
+    }
+
+    return snippetFilePath;
+}
+
+async function selectWorkspaceFolder(resourceUri) {
+    if (resourceUri) {
+        const resourceFolder = vscode.workspace.getWorkspaceFolder(resourceUri);
+        if (resourceFolder) {
+            return resourceFolder;
+        }
+    }
+
+    const editorUri = vscode.window.activeTextEditor?.document.uri;
+    if (editorUri) {
+        const editorFolder = vscode.workspace.getWorkspaceFolder(editorUri);
+        if (editorFolder) {
+            return editorFolder;
+        }
+    }
+
+    const workspaceFolders = vscode.workspace.workspaceFolders || [];
+    if (workspaceFolders.length === 1) {
+        return workspaceFolders[0];
+    }
+
+    if (workspaceFolders.length > 1) {
+        const selected = await vscode.window.showQuickPick(
+            workspaceFolders.map(folder => ({
+                label: folder.name,
+                description: folder.uri.fsPath,
+                folder
+            })),
+            { placeHolder: 'Select the project for Fanuc snippets' }
+        );
+        return selected?.folder;
+    }
+
+    return undefined;
+}
+
+async function openProjectSnippetFile(resourceUri) {
+    const workspaceFolder = await selectWorkspaceFolder(resourceUri);
+    if (!workspaceFolder) {
+        vscode.window.showErrorMessage('Open a project folder before creating project Fanuc snippets.');
+        return;
+    }
+
+    const vscodeFolderUri = vscode.Uri.joinPath(workspaceFolder.uri, '.vscode');
+    const snippetFileUri = vscode.Uri.joinPath(vscodeFolderUri, USER_SNIPPETS_FILENAME);
+    await vscode.workspace.fs.createDirectory(vscodeFolderUri);
+
+    try {
+        await vscode.workspace.fs.stat(snippetFileUri);
+    } catch (error) {
+        if (error.code !== 'FileNotFound') {
+            throw error;
+        }
+        await vscode.workspace.fs.writeFile(snippetFileUri, Buffer.from(PROJECT_SNIPPETS_TEMPLATE, 'utf8'));
+        outputChannel.appendLine(`Created project Fanuc snippet file at ${snippetFileUri.toString()}`);
+    }
+
+    const document = await vscode.workspace.openTextDocument(snippetFileUri);
+    await vscode.window.showTextDocument(document);
+}
+
+function registerSnippetWatcher(context, snippetFilePath, sourceLabel, onLoad, onDelete) {
+    const pattern = new vscode.RelativePattern(path.dirname(snippetFilePath), path.basename(snippetFilePath));
+    const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+
+    const reload = () => {
+        const definitions = loadSnippetFile(snippetFilePath, sourceLabel, false);
+        if (definitions) {
+            onLoad(definitions);
+        }
+    };
+    watcher.onDidChange(reload);
+    watcher.onDidCreate(reload);
+    watcher.onDidDelete(() => {
+        onDelete();
+        vscode.window.showWarningMessage(`${sourceLabel} Fanuc snippet file was removed: ${snippetFilePath}`);
+    });
+
+    context.subscriptions.push(watcher);
+    return watcher;
+}
+
+function loadSnippetFile(snippetFilePath, sourceLabel, showSuccess = true) {
+    try {
+        const loadedDefinitions = loadSnippetDefinitions(snippetFilePath);
+        outputChannel.appendLine(`Loaded ${loadedDefinitions.length} ${sourceLabel.toLowerCase()} Fanuc snippets from ${snippetFilePath}`);
+
+        if (showSuccess) {
+            vscode.window.showInformationMessage(`Loaded ${loadedDefinitions.length} ${sourceLabel.toLowerCase()} Fanuc snippets.`);
+        }
+        return loadedDefinitions;
+    } catch (error) {
+        outputChannel.appendLine(`Failed to load ${sourceLabel.toLowerCase()} Fanuc snippets from ${snippetFilePath}: ${error.message}`);
+        vscode.window.showErrorMessage(`Could not load ${sourceLabel.toLowerCase()} Fanuc snippets: ${error.message}`);
+        return undefined;
+    }
+}
+
+function createExternalSnippetCompletionProvider() {
+    return vscode.languages.registerCompletionItemProvider('fanuctp', {
+        provideCompletionItems() {
+            return [...managedSnippetDefinitions, ...externalSnippetDefinitions].map((definition) => {
+                const item = new vscode.CompletionItem({
+                    label: definition.prefix,
+                    description: definition.name
+                }, vscode.CompletionItemKind.Snippet);
+                item.insertText = new vscode.SnippetString(definition.body);
+                item.filterText = definition.prefix;
+                item.detail = 'External Fanuc snippet';
+                if (definition.description) {
+                    item.documentation = new vscode.MarkdownString(definition.description);
+                }
+                return item;
+            });
+        }
+    });
+}
 
 
 
 // Make the activate function async
 async function activate(context) {
     outputChannel.show();
+
+    const managedSnippetFilePath = ensureManagedSnippetFile(context);
+    const loadedManagedSnippets = loadSnippetFile(managedSnippetFilePath, 'User', false);
+    if (loadedManagedSnippets) {
+        managedSnippetDefinitions = loadedManagedSnippets;
+    }
+    registerSnippetWatcher(
+        context,
+        managedSnippetFilePath,
+        'User',
+        definitions => { managedSnippetDefinitions = definitions; },
+        () => {
+            managedSnippetDefinitions = [];
+            ensureManagedSnippetFile(context);
+        }
+    );
+
+    const externalSnippetProvider = createExternalSnippetCompletionProvider();
+    const openUserSnippets = vscode.commands.registerCommand('extension.openUserSnippets', async () => {
+        const document = await vscode.workspace.openTextDocument(vscode.Uri.file(managedSnippetFilePath));
+        await vscode.window.showTextDocument(document);
+    });
+    const openProjectSnippets = vscode.commands.registerCommand('extension.openProjectSnippets', async (resourceUri) => {
+        try {
+            await openProjectSnippetFile(resourceUri);
+        } catch (error) {
+            outputChannel.appendLine(`Failed to open project Fanuc snippets: ${error.message}`);
+            vscode.window.showErrorMessage(`Could not open project Fanuc snippets: ${error.message}`);
+        }
+    });
+    const selectExternalSnippets = vscode.commands.registerCommand('extension.selectExternalSnippets', async () => {
+        const selectedFiles = await vscode.window.showOpenDialog({
+            canSelectFiles: true,
+            canSelectFolders: false,
+            canSelectMany: false,
+            openLabel: 'Load Fanuc Snippets',
+            filters: {
+                'VS Code Snippets': ['code-snippets', 'json']
+            }
+        });
+
+        if (!selectedFiles || selectedFiles.length === 0) {
+            return;
+        }
+
+        const snippetFilePath = selectedFiles[0].fsPath;
+        const loadedExternalSnippets = loadSnippetFile(snippetFilePath, 'External');
+        if (loadedExternalSnippets) {
+            externalSnippetDefinitions = loadedExternalSnippets;
+            await context.globalState.update(EXTERNAL_SNIPPETS_STATE_KEY, snippetFilePath);
+            await vscode.workspace.getConfiguration('robotFtp').update(
+                EXTERNAL_SNIPPETS_CONFIG_KEY,
+                snippetFilePath,
+                vscode.ConfigurationTarget.Global
+            );
+            if (externalSnippetWatcher) {
+                externalSnippetWatcher.dispose();
+            }
+            externalSnippetWatcher = registerSnippetWatcher(
+                context,
+                snippetFilePath,
+                'External',
+                definitions => { externalSnippetDefinitions = definitions; },
+                () => { externalSnippetDefinitions = []; }
+            );
+        }
+    });
+    const clearExternalSnippets = vscode.commands.registerCommand('extension.clearExternalSnippets', async () => {
+        externalSnippetDefinitions = [];
+        if (externalSnippetWatcher) {
+            externalSnippetWatcher.dispose();
+            externalSnippetWatcher = undefined;
+        }
+        await context.globalState.update(EXTERNAL_SNIPPETS_STATE_KEY, undefined);
+        await vscode.workspace.getConfiguration('robotFtp').update(
+            EXTERNAL_SNIPPETS_CONFIG_KEY,
+            undefined,
+            vscode.ConfigurationTarget.Global
+        );
+        vscode.window.showInformationMessage('External Fanuc snippets cleared. Built-in and user snippets are still available.');
+    });
+
+    context.subscriptions.push(externalSnippetProvider, openUserSnippets, openProjectSnippets, selectExternalSnippets, clearExternalSnippets);
+
+    const configuredSnippetFilePath = vscode.workspace.getConfiguration('robotFtp').get(EXTERNAL_SNIPPETS_CONFIG_KEY, '');
+    const savedSnippetFilePath = configuredSnippetFilePath || context.globalState.get(EXTERNAL_SNIPPETS_STATE_KEY);
+    if (savedSnippetFilePath) {
+        const loadedExternalSnippets = loadSnippetFile(savedSnippetFilePath, 'External', false);
+        if (loadedExternalSnippets) {
+            externalSnippetDefinitions = loadedExternalSnippets;
+        }
+        externalSnippetWatcher = registerSnippetWatcher(
+            context,
+            savedSnippetFilePath,
+            'External',
+            definitions => { externalSnippetDefinitions = definitions; },
+            () => { externalSnippetDefinitions = []; }
+        );
+
+        if (!configuredSnippetFilePath) {
+            await vscode.workspace.getConfiguration('robotFtp').update(
+                EXTERNAL_SNIPPETS_CONFIG_KEY,
+                savedSnippetFilePath,
+                vscode.ConfigurationTarget.Global
+            );
+        }
+    }
+
     const downloadAll_Function = vscode.commands.registerCommand("extension.downloadAllFiles", async () => {
         // Prompt the user to select a folder
         const destinationFolder = await vscode.window.showOpenDialog({

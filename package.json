@@ -3,7 +3,7 @@
   "displayName": "Robot FTP",
   "description": "VSCODE extension to FTP *.ls file to Fanuc Robot",
   "publisher": "CoreyApplegate",
-  "version": "0.4.4",
+  "version": "0.5.0",
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -18,7 +18,13 @@
 		"LS"
 	],
   "activationEvents": [
-    "workspaceContains:**/*.ls"
+    "workspaceContains:**/*.ls",
+    "workspaceContains:**/*.LS",
+    "onLanguage:fanuctp",
+    "onCommand:extension.openUserSnippets",
+    "onCommand:extension.openProjectSnippets",
+    "onCommand:extension.selectExternalSnippets",
+    "onCommand:extension.clearExternalSnippets"
   ],
   "main": "./src/extension.js",
   "contributes": {
@@ -26,7 +32,8 @@
 			{
 				"id": "fanuctp",
 				"extensions": [
-					".ls"
+					".ls",
+					".LS"
 				],
 				"aliases": [
 					"Fanuc TP Program"
@@ -51,6 +58,22 @@
       {
         "command": "extension.listLsFilesAndInsert",
         "title": "List ls Programs"
+      },
+      {
+        "command": "extension.openUserSnippets",
+        "title": "Open User Fanuc Snippets"
+      },
+      {
+        "command": "extension.openProjectSnippets",
+        "title": "Create/Open Project Fanuc Snippets File"
+      },
+      {
+        "command": "extension.selectExternalSnippets",
+        "title": "Load External Fanuc Snippets"
+      },
+      {
+        "command": "extension.clearExternalSnippets",
+        "title": "Clear External Fanuc Snippets"
       },
       {
         "command": "extension.updateFilesFromRobotLsFiles",
@@ -137,6 +160,22 @@
           "group": "fanucNavigation"
         },
         {
+          "command": "extension.selectExternalSnippets",
+          "group": "fanucNavigation"
+        },
+        {
+          "command": "extension.openUserSnippets",
+          "group": "fanucNavigation"
+        },
+        {
+          "command": "extension.openProjectSnippets",
+          "group": "fanucNavigation"
+        },
+        {
+          "command": "extension.clearExternalSnippets",
+          "group": "fanucNavigation"
+        },
+        {
           "command": "extension.downloadAllFiles",
           "group": "fanucGet"
         },
@@ -171,6 +210,12 @@
           "type": "string",
           "default": "",
           "description": "FTP password for the robot (default: empty for RoboGuide)"
+        },
+        "robotFtp.externalSnippetsFile": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "description": "Absolute path to an external Fanuc .code-snippets or JSON file. This augments the built-in snippets."
         }
       }
     }

@@ -110,6 +110,46 @@ Use the commands available in the command palette or keybindings to interact wit
 
 # Snippet Triggers and Descriptions
 
+Fanuc snippets are loaded in three additive levels:
+
+1. **Built-in** — Defaults supplied by the extension.
+2. **User/global** — An editable `fanuc-snippets.code-snippets` file loaded in every workspace for the current VS Code profile. Run **Open User Fanuc Snippets** to edit it. The file is watched for saved changes and never overwritten during extension updates.
+3. **Project** — A `.vscode/fanuc-snippets.code-snippets` file loaded only in the selected workspace. Run **Create/Open Project Fanuc Snippets File** to create it with a starter framework or open the existing file without overwriting it. VS Code loads this file natively; use `"scope": "fanuctp"` on its snippet entries.
+
+On standard Windows VS Code installations, the managed file is stored beneath `%APPDATA%\Code\User\globalStorage\coreyapplegate.robot-ftp`. Use the command instead of relying on that exact path because profiles, VS Code Insiders, and remote environments use different storage roots.
+
+You can additionally run **Load External Fanuc Snippets** and select a `.code-snippets` or `.json` file from Documents, OneDrive, or a network location. The external file augments both the defaults and managed user snippets. Its absolute path is saved under `robotFtp.externalSnippetsFile`. Run **Clear External Fanuc Snippets** to stop loading only the external file.
+
+External files use the standard VS Code snippet format:
+
+```json
+{
+  "Pulse Output": {
+    "prefix": "PULSE",
+    "body": [
+      ":  PULSE DO[${1:1}] FOR ${2:0.5}sec ;"
+    ],
+    "description": "Pulse a digital output"
+  }
+}
+```
+
+For a project-only file, add the Fanuc language scope:
+
+```json
+{
+  "Project Initialization": {
+    "scope": "fanuctp",
+    "prefix": "PROJECT INIT",
+    "body": [
+      ":  UFRAME_NUM=${1:1} ;",
+      ":  UTOOL_NUM=${2:1} ;"
+    ],
+    "description": "Project-specific initialization"
+  }
+}
+```
+
 1. **Set Frames**  
    - **Trigger**: `set frames`  
    - **Description**: Set Up Frames

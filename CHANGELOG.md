@@ -11,3 +11,4 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - 0.3.4 Adds Get Update for This LS file
 - 0.4.3 Adds FTP connection settings, connection timeout handling, and byte-level transfer progress for large uploads/downloads.
 - 0.4.4 Adds recent robot IP history with `recent-ips.json` and the last five valid addresses shown in the IP picker.
+- 0.5.0 Adds three-level snippet loading: built-in defaults, persistent user/global snippets, and native project-only `.vscode` snippets. Additional external Fanuc snippet files can also be loaded and automatically reloaded.
