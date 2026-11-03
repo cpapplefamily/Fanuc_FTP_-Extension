@@ -222,6 +222,7 @@
   },
   "scripts": {
     "lint": "eslint .",
+    "test:snippets": "mocha --ui tdd test/externalSnippets.test.js",
     "pretest": "npm run lint",
     "test": "vscode-test"
   },

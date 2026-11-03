@@ -205,3 +205,7 @@ For a project-only file, add the Fanuc language scope:
 ## Acknowledgments
 
 This extension's syntax highlighting is based on the work from [TPSyntaxHighlighter](https://github.com/alek5k/TPSyntaxHighlighter). We appreciate the contributions made by the original author. 
+
+## Publishing
+
+Marketplace releases use Microsoft Entra workload identity federation through Azure Pipelines; no Personal Access Token is stored in the repository or pipeline. See [Secure Visual Studio Marketplace publishing](docs/secure-publishing.md) for setup and release instructions.

@@ -10,3 +10,5 @@ vsc-extension-quickstart.md
 **/.vscode-test.*
 *.vsix
 .agents/**
+azure-pipelines.yml
+docs/secure-publishing.md

@@ -1,0 +1,69 @@
+trigger:
+  branches:
+    exclude:
+      - '*'
+  tags:
+    include:
+      - 'v*'
+
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  azureServiceConnection: robot-ftp-marketplace
+  nodeVersion: '20.x'
+  vsceVersion: '3.2.1'
+
+steps:
+  - checkout: self
+    clean: true
+
+  - task: NodeTool@0
+    displayName: Use Node.js $(nodeVersion)
+    inputs:
+      versionSpec: $(nodeVersion)
+
+  - script: npm ci
+    displayName: Install dependencies
+
+  - script: npm run lint
+    displayName: Lint extension
+
+  - script: npm run test:snippets
+    displayName: Test snippet loading
+
+  - bash: |
+      set -euo pipefail
+      VERSION=$(node -p "require('./package.json').version")
+
+      if [[ "$BUILD_SOURCEBRANCH" == refs/tags/v* ]]; then
+        TAG_VERSION="${BUILD_SOURCEBRANCH#refs/tags/v}"
+        if [[ "$TAG_VERSION" != "$VERSION" ]]; then
+          echo "Tag version $TAG_VERSION does not match package.json version $VERSION."
+          exit 1
+        fi
+      fi
+
+      npm install --global "@vscode/vsce@$(vsceVersion)"
+      vsce package --out "$(Build.ArtifactStagingDirectory)/robot-ftp-$VERSION.vsix"
+    displayName: Validate version and package VSIX
+
+  - task: PublishPipelineArtifact@1
+    displayName: Publish VSIX pipeline artifact
+    inputs:
+      targetPath: $(Build.ArtifactStagingDirectory)
+      artifact: robot-ftp-vsix
+
+  - task: AzureCLI@2
+    displayName: Publish to Visual Studio Marketplace using managed identity
+    inputs:
+      azureSubscription: $(azureServiceConnection)
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+        VERSION=$(node -p "require('./package.json').version")
+        VSIX_PATH="$(Build.ArtifactStagingDirectory)/robot-ftp-$VERSION.vsix"
+        vsce publish --packagePath "$VSIX_PATH" --azure-credential
