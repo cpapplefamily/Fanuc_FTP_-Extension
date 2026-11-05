@@ -6,6 +6,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.6.0-dev] - 2026-11-05
+
+- Prompt for and validate a 16-character FANUC program comment after rename validation, updating the LS COMMENT attribute.
+
+- Add Rename LS File to the Explorer context menu, validating FANUC program names up to 36 characters and updating the /PROG header.
+
 ## [0.6.0] - 2026-11-05
 
 - Log the descriptions-loaded message only once per extension activation.

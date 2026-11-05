@@ -27,6 +27,16 @@ This Visual Studio Code extension allows you to interact with a Fanuc robot via 
 
 ## Commands
 
+### Rename an LS program
+
+Right-click an `.ls` or `.LS` file in Explorer and choose **MNAutomation → Rename LS File**. Enter a name without the extension. Names may contain 1–36 letters, numbers, or underscores, cannot start with a number, and cannot use reserved names such as `CON`, `NUL`, `COM1`, or `LPT1`. This targets newer FANUC controllers supporting 36-character names; older controllers may require shorter names.
+
+After the name passes validation, a second prompt lets you edit the program comment. Comments allow up to 16 characters including letters, numbers, spaces, underscores, `@`, or `*`; leave blank for no comment. Spaces count toward the limit. The existing comment is prefilled. Cancelling either prompt leaves the file unchanged.
+
+The command renames the local file and updates its `/PROG` header and `/ATTR` `COMMENT` field, preserving the extension and other contents. Save pending edits first. Existing filenames are protected, including case-insensitive matches. Calls to the program in other files and programs on the robot are not renamed.
+
+Naming rules: [FANUC R-30iB operator's manual, section 4.1.1](https://robochallenge.pl/wp-content/uploads/2021/10/R-30iB_Plus_basic_operator_manual_B-83284EN_09_Robo_Challenge.pdf).
+
 1. **`extension.downloadAllFiles`**
    - Downloads all files from the robot to a user-selected folder.
 

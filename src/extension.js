@@ -3,6 +3,7 @@ const ftp = require('basic-ftp');
 const path = require('path');
 const fs = require('fs');
 const csv = require('csv-parser'); // Install csv-parser for reading CSV files
+const { createRenameLsCommand } = require('./renameLs');
 const {
     loadSnippetDefinitions,
     PROJECT_SNIPPETS_TEMPLATE,
@@ -153,6 +154,9 @@ function createExternalSnippetCompletionProvider() {
 // Make the activate function async
 async function activate(context) {
     outputChannel.show();
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'extension.renameLsFile', createRenameLsCommand(vscode, outputChannel)
+    ));
 
     const managedSnippetFilePath = ensureManagedSnippetFile(context);
     const loadedManagedSnippets = loadSnippetFile(managedSnippetFilePath, 'User', false);
