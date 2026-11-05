@@ -451,6 +451,7 @@ async function activate(context) {
 }
 
 let descriptions = {}; // Store the descriptions
+let descriptionsLoadedLogged = false;
 
 // Function to load descriptions from the CSV file
 async function loadDescriptions(csvFilePath) {
@@ -485,7 +486,10 @@ async function loadDescriptions(csvFilePath) {
                 }
             })
             .on('end', () => {
-                outputChannel.appendLine('Descriptions loaded:' + newDescriptions);
+                if (!descriptionsLoadedLogged) {
+                    outputChannel.appendLine('Descriptions loaded.');
+                    descriptionsLoadedLogged = true;
+                }
                 resolve(newDescriptions);
             })
             .on('error', (err) => {

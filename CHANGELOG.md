@@ -6,6 +6,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-05
+
+- Log the descriptions-loaded message only once per extension activation.
+
+## Previous releases
+
 - Initial release
 - 0.3.0 Added ip.txt file check to get a default IP if the FIle exsists and if not will prompt user if we should create one. 
 - 0.3.4 Adds Get Update for This LS file
