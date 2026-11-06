@@ -1,6 +1,22 @@
 # Fanuc FTP Extension - Custom Agents
 
 ## Overview
+
+## Start here (updated 2026-11-05)
+
+This repository is the Robot FTP VS Code extension. Read these files before changing related code:
+
+- [.agents/HANDOFF.md](.agents/HANDOFF.md): current state, user decisions, limitations, and remaining work.
+- [.agents/LSVerifier.md](.agents/LSVerifier.md): verifier architecture, editable rule schema, migration, and section behavior.
+- [.agents/RenameLS.md](.agents/RenameLS.md): rename and program-comment workflow.
+- [.agents/QualityAssurance.md](.agents/QualityAssurance.md): reproducible checks and manual verification.
+- [.agents/DocumentationRelease.md](.agents/DocumentationRelease.md): packaging instructions and release history.
+- [.agents/SyntaxHighlighting.md](.agents/SyntaxHighlighting.md): existing syntax work record.
+- [.agents/TODO.md](.agents/TODO.md): remaining requested features.
+
+Read `package.json` for the authoritative version (currently `0.7.0-dev`). Preserve existing user edits. The role descriptions below are task guidance, not a requirement to spawn agents. Keep LS commands in the **MNAutomation** submenu. Do not add line-number validation or reject repeated `/APPL` headers between `/ATTR` and `/MN`.
+
+## Role reference
 These custom agents are designed to help with specific upgrade and maintenance tasks for the Robot FTP extension. Use these agent names when working on targeted improvements.
 
 ---
