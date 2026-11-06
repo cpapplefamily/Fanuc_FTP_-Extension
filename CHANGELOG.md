@@ -6,6 +6,14 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Require /APPL between /ATTR and /MN while accepting repeated /APPL headers produced by robot round trips.
+
+- Add configurable LS checks for section structure, program names, delimiters, labels/jumps, position references, motion fields, and local program calls. Preserve existing rules when upgrading; omit line-number checks.
+
+## [0.7.0-dev] - 2026-11-05
+
+- Add LS verification with editable JSON rules and Problems-panel diagnostics for missing colons and final semicolons in the /MN section.
+
 ## [0.6.0-dev] - 2026-11-05
 
 - Prompt for and validate a 16-character FANUC program comment after rename validation, updating the LS COMMENT attribute.

@@ -27,6 +27,32 @@ This Visual Studio Code extension allows you to interact with a Fanuc robot via 
 
 ## Commands
 
+### Verify an LS file
+
+Right-click an LS file and select **MNAutomation → Verify LS File**. Results appear in the Problems panel with clickable line locations. The verifier checks the current editor contents, including unsaved changes. It does not modify the program. Run verification again after editing; old diagnostics are cleared when the document changes.
+
+The initial rules check nonblank lines within `/MN`, stopping at the next section such as `/POS` or `/END`. Each line must contain a colon and end with a semicolon. All text before the first colon is ignored, so `123: CALL MAIN ;` is valid. Trailing whitespace is ignored. A missing `/MN` section is reported separately. Passing these checks is not a full FANUC syntax validation.
+
+Choose **MNAutomation → Edit LS Verifier Rules** to open your `ls-verifier-rules.json`. It is created on first use in the extension's user storage and shared across workspaces in the current VS Code profile. Rules are read on each verification, including unsaved edits; save the file to persist changes. Invalid rule files report an error instead of silently using defaults.
+
+The JSON contains `version: 2` and a `rules` array. Each rule has a unique `id`, an `enabled` boolean, a `check`, a `message`, and an optional `severity` (`error` or `warning`). Literal `startsWith` / `endsWith` checks also require `section: "MN"` and a literal `value`. The template is in `src/lsVerifierRules.json`. Existing version 1 files are upgraded once: your rules and disabled settings are preserved, and missing advanced checks are appended. Save pending rules edits before upgrading.
+
+Additional configurable checks:
+
+| Check | What it checks | Default severity |
+| --- | --- | --- |
+| `sections` | Required `/PROG`, `/ATTR`, `/APPL`, `/MN`, `/END` sections and order; repeated `/APPL` headers are allowed between `/ATTR` and `/MN`. Also checks other required-section duplicates, optional `/POS` placement, and content after `/END`. | Error |
+| `programName` | FANUC program name validity and case-insensitive match with the LS filename | Error |
+| `delimiters` | Unclosed or mismatched brackets, parentheses, and quotes in MN instructions; ignores comments and bracket descriptions | Error |
+| `labels` | Duplicate literal `LBL[n]` definitions and literal `JMP LBL[n]` targets without a definition | Error |
+| `positions` | Literal `P[n]` references without matching definitions in `/POS` | Error |
+| `motion` | Missing/unrecognized position, speed, or termination fields on J/L/C/A motion instructions | Warning |
+| `calls` | Literal CALL/RUN targets without a matching local LS, TP, or PC filename | Warning |
+
+Local calls are searched in the selected file's workspace folder, or its containing directory when outside a workspace. Indirect register-based calls, jumps, and positions cannot be resolved statically; `PR[n]` is not required in `/POS`. Motion checks recognize common numeric/register speeds and FINE/CNT/CR termination, including continuation lines for circular moves. Controller-specific forms may need review. The original per-line semicolon rule remains independently configurable and can flag continuation lines that omit a semicolon. Line numbers are never validated. These checks do not replace the controller's loader/compiler.
+
+Motion syntax reference: [FANUC R-30iB basic operator's manual](https://robochallenge.pl/wp-content/uploads/2021/10/R-30iB_Plus_basic_operator_manual_B-83284EN_09_Robo_Challenge.pdf).
+
 ### Rename an LS program
 
 Right-click an `.ls` or `.LS` file in Explorer and choose **MNAutomation → Rename LS File**. Enter a name without the extension. Names may contain 1–36 letters, numbers, or underscores, cannot start with a number, and cannot use reserved names such as `CON`, `NUL`, `COM1`, or `LPT1`. This targets newer FANUC controllers supporting 36-character names; older controllers may require shorter names.

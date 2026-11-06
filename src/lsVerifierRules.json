@@ -1,0 +1,72 @@
+{
+  "version": 2,
+  "rules": [
+    {
+      "id": "mn-colon",
+      "enabled": true,
+      "section": "MN",
+      "check": "startsWith",
+      "severity": "error",
+      "value": ":",
+      "message": "MN line must contain a colon (text before the colon is ignored)."
+    },
+    {
+      "id": "mn-semicolon",
+      "enabled": true,
+      "section": "MN",
+      "check": "endsWith",
+      "severity": "error",
+      "value": ";",
+      "message": "MN line must end with a semicolon."
+    },
+    {
+      "id": "sections",
+      "enabled": true,
+      "check": "sections",
+      "severity": "error",
+      "message": "LS sections:"
+    },
+    {
+      "id": "programName",
+      "enabled": true,
+      "check": "programName",
+      "severity": "error",
+      "message": "LS programName:"
+    },
+    {
+      "id": "delimiters",
+      "enabled": true,
+      "check": "delimiters",
+      "severity": "error",
+      "message": "LS delimiters:"
+    },
+    {
+      "id": "labels",
+      "enabled": true,
+      "check": "labels",
+      "severity": "error",
+      "message": "LS labels:"
+    },
+    {
+      "id": "positions",
+      "enabled": true,
+      "check": "positions",
+      "severity": "error",
+      "message": "LS positions:"
+    },
+    {
+      "id": "motion",
+      "enabled": true,
+      "check": "motion",
+      "severity": "warning",
+      "message": "LS motion:"
+    },
+    {
+      "id": "calls",
+      "enabled": true,
+      "check": "calls",
+      "severity": "warning",
+      "message": "LS calls:"
+    }
+  ]
+}

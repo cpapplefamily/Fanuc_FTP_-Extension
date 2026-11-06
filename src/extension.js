@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const csv = require('csv-parser'); // Install csv-parser for reading CSV files
 const { createRenameLsCommand } = require('./renameLs');
+const { registerLsVerifier } = require('./lsVerifier');
 const {
     loadSnippetDefinitions,
     PROJECT_SNIPPETS_TEMPLATE,
@@ -154,6 +155,7 @@ function createExternalSnippetCompletionProvider() {
 // Make the activate function async
 async function activate(context) {
     outputChannel.show();
+    registerLsVerifier(vscode, context, outputChannel);
     context.subscriptions.push(vscode.commands.registerCommand(
         'extension.renameLsFile', createRenameLsCommand(vscode, outputChannel)
     ));
