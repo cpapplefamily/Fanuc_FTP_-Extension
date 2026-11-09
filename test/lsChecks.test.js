@@ -26,6 +26,10 @@ suite('LS advanced checks', () => {
         const text = program('arbitrary J: P[1:Home] 50% FINE ;\n 90: L PR[R[1]] R[2]mm/sec CNT R[3] ;\n1: LBL[10:Start] ;\n1: IF R[1]=0,JMP LBL[10] ;\n3: CALL SUB ;\n4: CALL SR[1] ;', 'P[1:Home]{\n};');
         assert.deepStrictEqual(check(text, { localPrograms: ['SUB'] }), []);
     });
+    test('ignores code-like text inside wrapped --eg: remarks', () => {
+        const text = program('  1:  --eg: NOTE, switch to the PR[20] = P[1]\n    :  then JMP LBL[9] and CALL NOPE ( ;\n  2:  CALL SUB ;');
+        assert.deepStrictEqual(check(text, { localPrograms: ['SUB'] }), []);
+    });
     test('checks required sections, order, duplicate sections and content after END', () => {
         for (const text of ['/PROG MAIN\n/MN\n/END', '/ATTR\n/PROG MAIN\n/MN\n/END', '/PROG MAIN\n/ATTR\n/MN\n/MN\n/END', program('') + '\n/MN']) {
             assert.ok(check(text).some(issue => issue.code === 'sections'));

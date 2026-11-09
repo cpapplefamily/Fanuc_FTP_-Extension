@@ -31,7 +31,9 @@ This Visual Studio Code extension allows you to interact with a Fanuc robot via 
 
 Right-click an LS file and select **MNAutomation → Verify LS File**. Results appear in the Problems panel with clickable line locations. The verifier checks the current editor contents, including unsaved changes. It does not modify the program. Run verification again after editing; old diagnostics are cleared when the document changes.
 
-The initial rules check nonblank lines within `/MN`, stopping at the next section such as `/POS` or `/END`. Each line must contain a colon and end with a semicolon. All text before the first colon is ignored, so `123: CALL MAIN ;` is valid. Trailing whitespace is ignored. A missing `/MN` section is reported separately. Passing these checks is not a full FANUC syntax validation.
+The initial rules check nonblank lines within `/MN`, stopping at the next section such as `/POS` or `/END`. Each line must contain a colon and end with a semicolon. All text before the first colon is ignored, so `123: CALL MAIN ;` is valid. Trailing whitespace is ignored. A missing `/MN` section is reported separately.
+
+Long `--eg:` remarks exported from the robot wrap at about 80 characters. Each continuation line starts with a bare `:` and has no `;`; only the last line ends with `;`. The verifier accepts this format. Every `--eg:` line still needs its own leading instruction `:` (for example `12:  --eg: text`); the colon inside `--eg:` does not count. It reports a missing `;` only when a wrapped remark never reaches its closing line. Remark text is not checked as code, so references like `P[1]` or `LBL[9]` inside a remark are ignored. Passing these checks is not a full FANUC syntax validation.
 
 Choose **MNAutomation → Edit LS Verifier Rules** to open your `ls-verifier-rules.json`. It is created on first use in the extension's user storage and shared across workspaces in the current VS Code profile. Rules are read on each verification, including unsaved edits; save the file to persist changes. Invalid rule files report an error instead of silently using defaults.
 

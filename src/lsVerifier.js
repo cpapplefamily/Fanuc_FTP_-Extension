@@ -1,5 +1,5 @@
 const defaultRules = require('./lsVerifierRules.json');
-const { checks, runChecks } = require('./lsChecks');
+const { checks, runChecks, remarkLine, instructionColon } = require('./lsChecks');
 const path = require('path');
 
 function parseRules(text) {
@@ -26,22 +26,41 @@ function verifyLs(text, rules, options = {}) {
     const issues = [];
     let section = '';
     let foundMn = false;
+    let pending; // Last line of a wrapped --eg: remark, waiting for its continuation.
+    function check(line, lineNumber, kinds) {
+        const colon = instructionColon(line);
+        const content = (colon < 0 ? line : line.slice(colon)).trim();
+        for (const rule of rules) {
+            if (rule.enabled && kinds.includes(rule.check) && !content[rule.check](rule.value)) {
+                issues.push({ line: lineNumber, start: Math.max(0, colon), end: line.length, message: rule.message, code: rule.id, severity: rule.severity || 'error' });
+            }
+        }
+    }
+    // A wrapped remark that never reached its ';' line is checked like a normal line.
+    function flush() {
+        if (pending) check(pending.line, pending.lineNumber, ['endsWith']);
+        pending = undefined;
+    }
     text.split(/\r?\n/).forEach((line, lineNumber) => {
         const marker = /^\s*\/([A-Z]+)(?:\s|$)/.exec(line);
         if (marker) {
+            flush();
             section = marker[1];
             if (section === 'MN') foundMn = true;
             return;
         }
         if (section !== 'MN' || !line.trim()) return;
-        const colon = line.indexOf(':');
-        const content = (colon < 0 ? line : line.slice(colon)).trim();
-        for (const rule of rules) {
-            if (rule.enabled && ['startsWith', 'endsWith'].includes(rule.check) && !content[rule.check](rule.value)) {
-                issues.push({ line: lineNumber, start: Math.max(0, colon), end: line.length, message: rule.message, code: rule.id, severity: rule.severity || 'error' });
-            }
+        const remark = remarkLine(Boolean(pending), line);
+        if (remark.continuation) pending = undefined;
+        else flush();
+        if (remark.open) {
+            check(line, lineNumber, ['startsWith']);
+            pending = { line, lineNumber };
+        } else {
+            check(line, lineNumber, ['startsWith', 'endsWith']);
         }
     });
+    flush();
     if (!foundMn && !rules.some(rule => rule.enabled && rule.check === 'sections')) {
         issues.push({ line: 0, start: 0, end: 0, message: 'No /MN section found; instruction rules could not be checked.', code: 'missing-mn' });
     }

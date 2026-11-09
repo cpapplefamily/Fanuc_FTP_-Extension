@@ -2,6 +2,23 @@ const { validateProgramName } = require('./renameLs');
 
 const checks = ['sections', 'programName', 'delimiters', 'labels', 'positions', 'motion', 'calls'];
 
+// Robot-exported --eg: remarks wrap at about 80 characters. Continuation lines start
+// with a bare ':' (no line number), and only the last line ends with ';'.
+// The instruction colon, ignoring the colon that belongs to an --eg: remark marker,
+// so "1  --eg: text ;" is reported as missing its leading ':'.
+function instructionColon(line) {
+    return line.search(/(?<!--eg):/i);
+}
+
+function remarkLine(open, line) {
+    const colon = instructionColon(line);
+    const content = colon < 0 ? '' : line.slice(colon + 1).trim();
+    const continuation = open && colon >= 0 && !line.slice(0, colon).trim();
+    // A remark missing its leading ':' is still remark text, not code.
+    const remark = continuation || /^--eg:/i.test(content) || (colon < 0 && /--eg:/i.test(line));
+    return { remark, continuation, open: remark && !content.endsWith(';') };
+}
+
 // Mask strings, comments and bracket descriptions before interpreting instructions.
 function scanCode(text) {
     let code = '', quote = '', description = false;
@@ -49,15 +66,18 @@ function runChecks(text, rules, options = {}) {
             message: `${rule.message} ${detail}` });
     }
     const markers = [], instructions = [], positions = new Set();
-    let section = '';
+    let section = '', remarkOpen = false;
     lines.forEach((line, index) => {
         const marker = /^\s*\/([A-Z]+)(?:\s|$)/.exec(line);
-        if (marker) { section = marker[1]; markers.push({ name: section, line: index }); return; }
+        if (marker) { section = marker[1]; remarkOpen = false; markers.push({ name: section, line: index }); return; }
         if (section === 'POS') {
             const position = /^\s*P\[\s*(\d+)(?:\s*:[^\]]*)?\s*\]/.exec(line);
             if (position) positions.add(Number(position[1]));
         }
         if (section !== 'MN' || !line.trim()) return;
+        const remark = remarkLine(remarkOpen, line);
+        remarkOpen = remark.open;
+        if (remark.remark) return; // Remark text is free-form, not code.
         const colon = line.indexOf(':');
         const body = colon < 0 ? line : line.slice(colon + 1);
         const scanned = scanCode(body);
@@ -148,4 +168,4 @@ function runChecks(text, rules, options = {}) {
     return issues;
 }
 
-module.exports = { checks, runChecks };
+module.exports = { checks, runChecks, remarkLine, instructionColon };

@@ -6,6 +6,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.7.1-dev] - 2026-11-08
+
+- Accept robot-wrapped multi-line `--eg:` remarks (bare `:` continuation lines, `;` only on the last line) and skip code checks inside remark text.
+
 - Require /APPL between /ATTR and /MN while accepting repeated /APPL headers produced by robot round trips.
 
 - Add configurable LS checks for section structure, program names, delimiters, labels/jumps, position references, motion fields, and local program calls. Preserve existing rules when upgrading; omit line-number checks.
