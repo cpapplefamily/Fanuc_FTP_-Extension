@@ -1,6 +1,7 @@
 const vscode = require('vscode');
 const ftp = require('basic-ftp');
 const path = require('path');
+const os = require('os');
 const fs = require('fs');
 const { createRenameLsCommand } = require('./renameLs');
 const { registerLsVerifier } = require('./lsVerifier');
@@ -12,6 +13,9 @@ const {
     parseDescriptionsCsv, mergeDescriptions, findDescriptionKeys,
     getSharedDescriptionsPath, getRobotDescriptionsPath, ensureDescriptionsFile
 } = require('./descriptions');
+const {
+    BACKUP_FILES, findBackupFiles, readBackupDescriptions, compareDescriptions, combineDescriptions, serializeDescriptionsCsv
+} = require('./backupDescriptions');
 const {
     loadSnippetDefinitions,
     PROJECT_SNIPPETS_TEMPLATE,
@@ -525,9 +529,185 @@ function registerDescriptionHints(context) {
             }
         }),
         vscode.commands.registerCommand('extension.editDescriptions', editDescriptions),
+        vscode.commands.registerCommand('extension.createDescriptionsFromBackup', createDescriptionsFromBackup),
+        vscode.commands.registerCommand('extension.getDescriptionsFromRobot', getDescriptionsFromRobot),
         { dispose: () => clearTimeout(pending) }
     );
     updateAllDescriptionDecorations();
+}
+
+/** Creates or updates a descriptions CSV from the comments in a robot backup folder. */
+async function createDescriptionsFromBackup(resourceUri) {
+    let folderPath;
+    if (resourceUri && fs.existsSync(resourceUri.fsPath)) {
+        folderPath = fs.statSync(resourceUri.fsPath).isDirectory() ? resourceUri.fsPath : path.dirname(resourceUri.fsPath);
+    } else {
+        const picked = await vscode.window.showOpenDialog({
+            canSelectFiles: false, canSelectFolders: true, openLabel: 'Use this backup folder',
+            title: 'Select a robot backup folder (from Get ALL Files from Robot)'
+        });
+        if (!picked || picked.length === 0) {
+            return;
+        }
+        folderPath = picked[0].fsPath;
+    }
+
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(folderPath))
+        || await selectWorkspaceFolder(undefined);
+    if (!workspaceFolder) {
+        vscode.window.showErrorMessage('Open the job folder first. Descriptions are saved in its .vscode/descriptions folder.');
+        return;
+    }
+    await importDescriptionsFromFolder(folderPath, workspaceFolder.uri.fsPath, folderPath, path.basename(folderPath));
+}
+
+/** Downloads only the comment files from the robot, then imports them like a backup. */
+async function getDescriptionsFromRobot(resourceUri) {
+    let ownerPath;
+    if (resourceUri && fs.existsSync(resourceUri.fsPath)) {
+        ownerPath = fs.statSync(resourceUri.fsPath).isDirectory() ? resourceUri.fsPath : path.dirname(resourceUri.fsPath);
+    }
+    const workspaceFolder = (ownerPath && vscode.workspace.getWorkspaceFolder(vscode.Uri.file(ownerPath)))
+        || await selectWorkspaceFolder(resourceUri);
+    if (!workspaceFolder) {
+        vscode.window.showErrorMessage('Open the job folder first. Descriptions are saved in its .vscode/descriptions folder.');
+        return;
+    }
+    ownerPath = ownerPath || workspaceFolder.uri.fsPath;
+
+    const tempFolder = fs.mkdtempSync(path.join(os.tmpdir(), 'robot-ftp-descriptions-'));
+    let robotIp;
+    try {
+        await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title: 'Getting I/O and register comments from robot', cancellable: false },
+            async progress => {
+                await withRobotConnection(ownerPath, 'GetDescriptions', async (client, ipAddress) => {
+                    robotIp = ipAddress;
+                    const remoteFiles = (await client.list()).filter(file => file.isFile && BACKUP_FILES.includes(file.name.toLowerCase()));
+                    for (const file of remoteFiles) {
+                        progress.report({ message: file.name });
+                        outputChannel.appendLine(`Downloading file: ${file.name}`);
+                        await client.downloadTo(path.join(tempFolder, file.name), file.name);
+                    }
+                    outputChannel.appendLine(`Downloaded ${remoteFiles.length} of ${BACKUP_FILES.length} description files from ${ipAddress}.`);
+                });
+            }
+        );
+        if (!robotIp) {
+            return; // Connection failed or was cancelled; withRobotConnection already reported it.
+        }
+        await importDescriptionsFromFolder(tempFolder, workspaceFolder.uri.fsPath, ownerPath, `robot ${robotIp}`);
+    } finally {
+        fs.rmSync(tempFolder, { recursive: true, force: true });
+    }
+}
+
+/**
+ * Reads the comment files in folderPath and saves them to a descriptions CSV.
+ * ownerPath decides which robot's file is offered first; sourceLabel names the source in prompts.
+ */
+async function importDescriptionsFromFolder(folderPath, workspaceRoot, ownerPath, sourceLabel) {
+    const relative = filePath => path.relative(workspaceRoot, filePath).split(path.sep).join('/');
+
+    let files;
+    try {
+        files = findBackupFiles(folderPath);
+    } catch (error) {
+        vscode.window.showErrorMessage(`Could not read ${folderPath}: ${error.message}`);
+        return;
+    }
+    if (Object.keys(files).length === 0) {
+        vscode.window.showErrorMessage(
+            `No description files found in ${sourceLabel}. Expected ${BACKUP_FILES.join(', ')}. For a backup folder, run "Get ALL Files from Robot" first and use the downloaded folder.`
+        );
+        return;
+    }
+
+    let backup;
+    try {
+        backup = readBackupDescriptions(files);
+    } catch (error) {
+        vscode.window.showErrorMessage(`Could not read the backup files: ${error.message}`);
+        return;
+    }
+    const countText = Object.entries(backup.counts).map(([name, count]) => `${name}: ${count}`).join(', ');
+    outputChannel.appendLine(`Descriptions from ${sourceLabel}: ${countText}`);
+    if (backup.descriptions.size === 0) {
+        vscode.window.showWarningMessage(`${sourceLabel} has no I/O or register comments.`);
+        return;
+    }
+
+    // Target: the robot that owns this folder first, then shared, then other robots.
+    const { robots } = readIpConfig(workspaceRoot);
+    const folderRobot = robotForPath(robots, workspaceRoot, ownerPath);
+    const items = [];
+    if (folderRobot) {
+        const filePath = getRobotDescriptionsPath(workspaceRoot, folderRobot);
+        items.push({ label: folderRobot.name, description: `this folder · ${relative(filePath)}`, filePath });
+    }
+    for (const robot of robots) {
+        if (robot !== folderRobot) {
+            const filePath = getRobotDescriptionsPath(workspaceRoot, robot);
+            items.push({ label: robot.name, description: relative(filePath), filePath });
+        }
+    }
+    items.push({ label: 'Shared', description: `all robots · ${relative(getSharedDescriptionsPath(workspaceRoot))}`, filePath: getSharedDescriptionsPath(workspaceRoot) });
+
+    const target = await vscode.window.showQuickPick(items, {
+        placeHolder: `Save ${backup.descriptions.size} descriptions from ${sourceLabel} to which file?`
+    });
+    if (!target) {
+        return;
+    }
+
+    let existing = new Map();
+    let droppedRows = 0;
+    if (fs.existsSync(target.filePath)) {
+        try {
+            const parsed = parseDescriptionsCsv(fs.readFileSync(target.filePath, 'utf8'));
+            existing = parsed.descriptions;
+            droppedRows = parsed.problems.length;
+        } catch (error) {
+            vscode.window.showErrorMessage(`Could not read ${relative(target.filePath)}: ${error.message}`);
+            return;
+        }
+    }
+
+    let mode = 'replace';
+    if (existing.size > 0 || droppedRows > 0) {
+        const diff = compareDescriptions(existing, backup.descriptions);
+        const dropped = droppedRows > 0 ? ` ${droppedRows} unreadable row(s) will be removed.` : '';
+        const choice = await vscode.window.showQuickPick([
+            {
+                label: 'Merge', mode: 'merge',
+                description: `${diff.added} new, ${diff.changed} changed, keep ${diff.kept} rows not in the backup`,
+                detail: `Robot comments replace matching keys; your other rows stay.${dropped}`
+            },
+            {
+                label: 'Replace', mode: 'replace',
+                description: `file will hold only the ${backup.descriptions.size} backup descriptions`,
+                detail: `Removes ${diff.kept} row(s) that are not in the backup.${dropped}`
+            }
+        ], { placeHolder: `${relative(target.filePath)} already has ${existing.size} descriptions` });
+        if (!choice) {
+            return;
+        }
+        mode = choice.mode;
+    }
+
+    const combined = combineDescriptions(existing, backup.descriptions, mode);
+    try {
+        fs.mkdirSync(path.dirname(target.filePath), { recursive: true });
+        fs.writeFileSync(target.filePath, serializeDescriptionsCsv(combined), 'utf8');
+    } catch (error) {
+        vscode.window.showErrorMessage(`Could not write ${relative(target.filePath)}: ${error.message}`);
+        return;
+    }
+    descriptionFileCache.delete(target.filePath);
+    updateAllDescriptionDecorations();
+    outputChannel.appendLine(`Wrote ${combined.size} descriptions to ${target.filePath} (${mode}).`);
+    vscode.window.showInformationMessage(`Saved ${combined.size} descriptions to ${relative(target.filePath)}.`);
+    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.file(target.filePath)));
 }
 
 /** Opens (creating if needed) the shared or a robot's descriptions file. */

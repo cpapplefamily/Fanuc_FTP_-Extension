@@ -3,7 +3,7 @@
   "displayName": "Robot FTP",
   "description": "VSCODE extension to FTP *.ls file to Fanuc Robot",
   "publisher": "CoreyApplegate",
-  "version": "0.8.5-dev",
+  "version": "0.8.6-dev",
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -130,6 +130,14 @@
       {
         "command": "extension.editDescriptions",
         "title": "Edit Descriptions"
+      },
+      {
+        "command": "extension.createDescriptionsFromBackup",
+        "title": "Create Descriptions from Backup"
+      },
+      {
+        "command": "extension.getDescriptionsFromRobot",
+        "title": "Get Descriptions from Robot"
       }
     ],
     "keybindings": [
@@ -166,6 +174,10 @@
       {
         "id": "MNAutomation.submenu",
         "label": "MNAutomation"
+      },
+      {
+        "id": "MNAutomation.descriptions",
+        "label": "Descriptions"
       }
     ],
     "menus": {
@@ -206,7 +218,7 @@
           "group": "fanucSend"
         },
         {
-          "command": "extension.editDescriptions",
+          "submenu": "MNAutomation.descriptions",
           "group": "fanucNavigation"
         },
         {
@@ -248,6 +260,21 @@
         {
           "command": "extension.openSettings",
           "group": "z_fanucSettings"
+        }
+      ],
+      "MNAutomation.descriptions": [
+        {
+          "command": "extension.getDescriptionsFromRobot",
+          "group": "1_create@1"
+        },
+        {
+          "command": "extension.createDescriptionsFromBackup",
+          "when": "explorerResourceIsFolder",
+          "group": "1_create@2"
+        },
+        {
+          "command": "extension.editDescriptions",
+          "group": "2_edit@1"
         }
       ]
     },

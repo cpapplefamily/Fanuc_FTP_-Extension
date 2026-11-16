@@ -6,6 +6,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.8.6-dev] - 2026-11-16
+
+- Add **Get Descriptions from Robot**: connects to the robot, downloads only the five comment files, and saves the comments to a descriptions file.
+- Add **Create Descriptions from Backup**: reads the I/O and register comments from a robot backup folder (`ioconfig.dg`, `iostate.dg`, `numreg.va`, `posreg.va`, `strreg.va`) and saves them to a robot's descriptions file or `shared.csv`. If the file already has descriptions, choose **Merge** (keep your other rows) or **Replace**.
+- Move the description commands into a **MNAutomation → Descriptions** submenu.
+
 ## [0.8.5-dev] - 2026-11-16
 
 - Fix: descriptions were missing after a NOT operator, e.g. `IF (!DO[17]) THEN`. Only lines whose statement starts with `!` are treated as remarks.

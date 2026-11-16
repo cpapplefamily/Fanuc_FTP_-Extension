@@ -78,10 +78,16 @@ Naming rules: [FANUC R-30iB operator's manual, section 4.1.1](https://robochalle
 5. **`extension.uploadFolderToRobot`**
    - Uploads an entire folder to the robot.
 
-6. **`extension.editDescriptions`** (MNAutomation → **Edit Descriptions**)
+6. **`extension.editDescriptions`** (MNAutomation → Descriptions → **Edit Descriptions**)
    - Opens the descriptions file for the robot of the selected folder, the shared file, or another robot's file. Creates the file with a `Key,Description` header if it does not exist.
 
-7. **`extension.listLsFilesAndInsert`**
+7. **`extension.getDescriptionsFromRobot`** (MNAutomation → Descriptions → **Get Descriptions from Robot**)
+   - Connects to the robot, downloads only its I/O and register comment files, and saves the comments to a descriptions file. See [Create descriptions from the robot](#create-descriptions-from-the-robot).
+
+   **`extension.createDescriptionsFromBackup`** (MNAutomation → Descriptions → **Create Descriptions from Backup**)
+   - Does the same from a backup folder you already downloaded.
+
+8. **`extension.listLsFilesAndInsert`**
    - Lists `.ls` files in the current directory and allows the user to insert the file name into the active editor.
 
 ## I/O and Register Descriptions
@@ -129,7 +135,40 @@ To change the colors, add them to your VS Code settings:
 
 A robot's file is named after the robot (`<name>.csv`). To use a different file, add `"descriptions": "path/to/file.csv"` (relative to the workspace folder) to that robot in `.vscode/robot-ftp.json`.
 
-Run **MNAutomation → Edit Descriptions** to open or create the right file. Old `descriptions.csv` files next to LS files are no longer read; copy their rows into `.vscode/descriptions/<robot>.csv` or `shared.csv`.
+Run **MNAutomation → Descriptions → Edit Descriptions** to open or create the right file. Old `descriptions.csv` files next to LS files are no longer read; copy their rows into `.vscode/descriptions/<robot>.csv` or `shared.csv`.
+
+### Create descriptions from the robot
+
+The robot already has comments for its I/O and registers. Copy them into a descriptions file instead of typing them. All description commands are in the **MNAutomation → Descriptions** menu:
+
+| Command | Use it when |
+|---|---|
+| **Get Descriptions from Robot** | You can connect to the robot. Downloads only the five comment files, nothing else. |
+| **Create Descriptions from Backup** | You already have a backup folder (for example from **Get ALL Files from Robot**). Right-click that folder. |
+| **Edit Descriptions** | You want to open a descriptions file and edit it by hand. |
+
+**Get Descriptions from Robot:**
+
+1. Right-click the robot's folder (for example `Robots/ST02`) and run **MNAutomation → Descriptions → Get Descriptions from Robot**.
+2. Pick the robot in the IP picker. The robot that owns the folder is listed first.
+3. Pick the file to save to. Again, the robot that owns the folder is listed first; you can also pick another robot or `shared.csv`.
+4. If the file already has descriptions, choose:
+   - **Merge**: the robot's comments replace matching keys; rows you added that are not on the robot stay.
+   - **Replace**: the file holds only the robot's comments.
+
+The downloaded files are deleted when it is done. The descriptions file opens, and the descriptions appear in your LS files right away.
+
+**Create Descriptions from Backup** works the same way, starting from step 3: right-click a backup folder such as `2026-11-16-ALL_01` and run **MNAutomation → Descriptions → Create Descriptions from Backup**.
+
+| File on the robot / in the backup | Descriptions read |
+|---|---|
+| `ioconfig.dg` | `DI`, `DO`, `GI`, `GO`, `UI`, `UO`, `AI`, `AO` |
+| `iostate.dg` | Adds `RI`, `RO`, and flags (`F`), plus any I/O missing from `ioconfig.dg` |
+| `numreg.va` | `R` |
+| `posreg.va` | `PR` (group 1) |
+| `strreg.va` | `SR` |
+
+Only items with a comment are added. Comments that are only spaces are skipped. If some of these files are missing from the folder, the command uses the ones it finds.
 
 ### CSV format
 
