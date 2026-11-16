@@ -605,8 +605,9 @@ async function getDescriptionsFromRobot(resourceUri) {
 /**
  * Reads the comment files in folderPath and saves them to a descriptions CSV.
  * ownerPath decides which robot's file is offered first; sourceLabel names the source in prompts.
+ * When targetFilePath is given, that file is used without asking.
  */
-async function importDescriptionsFromFolder(folderPath, workspaceRoot, ownerPath, sourceLabel) {
+async function importDescriptionsFromFolder(folderPath, workspaceRoot, ownerPath, sourceLabel, targetFilePath) {
     const relative = filePath => path.relative(workspaceRoot, filePath).split(path.sep).join('/');
 
     let files;
@@ -653,7 +654,7 @@ async function importDescriptionsFromFolder(folderPath, workspaceRoot, ownerPath
     }
     items.push({ label: 'Shared', description: `all robots · ${relative(getSharedDescriptionsPath(workspaceRoot))}`, filePath: getSharedDescriptionsPath(workspaceRoot) });
 
-    const target = await vscode.window.showQuickPick(items, {
+    const target = targetFilePath ? { filePath: targetFilePath } : await vscode.window.showQuickPick(items, {
         placeHolder: `Save ${backup.descriptions.size} descriptions from ${sourceLabel} to which file?`
     });
     if (!target) {
@@ -965,6 +966,7 @@ async function f_downloadFromRobot(destinationUri, isFolder, fileType, saveType)
 
     const dateFolderPath = path.join(destinationPath, folderName);
     fs.mkdirSync(dateFolderPath, { recursive: true });
+    let missingDescriptions;
 
     await vscode.window.withProgress(
         {
@@ -973,9 +975,9 @@ async function f_downloadFromRobot(destinationUri, isFolder, fileType, saveType)
             cancellable: false
         },
         async (progress) => {
-            await withRobotConnection(directoryPath, 'Download', async (client) => {
+            await withRobotConnection(directoryPath, 'Download', async (client, ipAddress) => {
                 const fileList = await client.list();
-                
+
                 // Count matching files for progress tracking
                 const filesToDownload = fileList.filter(file => {
                     if (!file.isFile) return false;
@@ -1008,9 +1010,95 @@ async function f_downloadFromRobot(destinationUri, isFolder, fileType, saveType)
                 }
                 
                 vscode.window.showInformationMessage(`${fileType === "*" ? "All" : fileType} files downloaded successfully to ${dateFolderPath}`);
+
+                // If this robot has no descriptions yet, get its comment files while still connected.
+                missingDescriptions = findRobotMissingDescriptions(destinationPath, ipAddress);
+                if (missingDescriptions) {
+                    missingDescriptions.ipAddress = ipAddress;
+                    if (fileType === '*') {
+                        missingDescriptions.sourceFolder = dateFolderPath;
+                    } else {
+                        missingDescriptions.sourceFolder = await downloadDescriptionFiles(client, fileList);
+                        missingDescriptions.isTemp = true;
+                    }
+                }
             });
         }
     );
+
+    if (missingDescriptions) {
+        await offerToCreateDescriptions(missingDescriptions, destinationPath);
+    }
+}
+
+const SKIP_DESCRIPTIONS_PROMPT_KEY = 'robotFtp.skipDescriptionsPrompt';
+
+/**
+ * After a download: the named robot (by folder, then by IP) whose descriptions file is missing or empty,
+ * unless the user chose "Don't ask again" for it. Returns { workspaceRoot, robot, filePath } or undefined.
+ */
+function findRobotMissingDescriptions(destinationPath, ipAddress) {
+    const workspaceRoot = getWorkspaceRoot(destinationPath);
+    if (!workspaceRoot) {
+        return undefined;
+    }
+    const { robots } = readIpConfig(workspaceRoot);
+    const robot = robotForPath(robots, workspaceRoot, destinationPath) || robots.find(candidate => candidate.ip === ipAddress);
+    if (!robot) {
+        outputChannel.appendLine(`No named robot for ${ipAddress}; skipping the descriptions check. Save the robot with a name to use descriptions.`);
+        return undefined;
+    }
+    const skipped = extensionContext.workspaceState.get(SKIP_DESCRIPTIONS_PROMPT_KEY, []);
+    if (skipped.includes(robot.name.toLowerCase())) {
+        return undefined;
+    }
+    const filePath = getRobotDescriptionsPath(workspaceRoot, robot);
+    try {
+        if (fs.existsSync(filePath) && parseDescriptionsCsv(fs.readFileSync(filePath, 'utf8')).descriptions.size > 0) {
+            return undefined;
+        }
+    } catch (error) {
+        outputChannel.appendLine(`Warning: Could not read ${filePath}: ${error.message}`);
+        return undefined;
+    }
+    return { workspaceRoot, robot, filePath };
+}
+
+/** Downloads the comment files listed in fileList into a new temp folder. Returns the folder path. */
+async function downloadDescriptionFiles(client, fileList) {
+    const tempFolder = fs.mkdtempSync(path.join(os.tmpdir(), 'robot-ftp-descriptions-'));
+    try {
+        for (const file of fileList.filter(item => item.isFile && BACKUP_FILES.includes(item.name.toLowerCase()))) {
+            await client.downloadTo(path.join(tempFolder, file.name), file.name);
+        }
+    } catch (error) {
+        outputChannel.appendLine(`Warning: Could not download description files: ${error.message}`);
+    }
+    return tempFolder;
+}
+
+async function offerToCreateDescriptions(missing, destinationPath) {
+    const { workspaceRoot, robot, filePath, sourceFolder, isTemp, ipAddress } = missing;
+    try {
+        const relativePath = path.relative(workspaceRoot, filePath).split(path.sep).join('/');
+        const create = 'Create';
+        const dontAsk = `Don't ask again for ${robot.name}`;
+        const choice = await vscode.window.showInformationMessage(
+            `Robot ${robot.name} has no descriptions yet. Create ${relativePath} from the robot's I/O and register comments?`,
+            create, 'Not now', dontAsk
+        );
+        if (choice === create) {
+            await importDescriptionsFromFolder(sourceFolder, workspaceRoot, destinationPath, `robot ${robot.name} (${ipAddress})`, filePath);
+        } else if (choice === dontAsk) {
+            const skipped = extensionContext.workspaceState.get(SKIP_DESCRIPTIONS_PROMPT_KEY, []);
+            await extensionContext.workspaceState.update(SKIP_DESCRIPTIONS_PROMPT_KEY, [...skipped, robot.name.toLowerCase()]);
+            outputChannel.appendLine(`Will not ask again to create descriptions for ${robot.name}. Use MNAutomation → Descriptions → Get Descriptions from Robot to create them later.`);
+        }
+    } finally {
+        if (isTemp) {
+            fs.rmSync(sourceFolder, { recursive: true, force: true });
+        }
+    }
 }
 
 async function f_updateFilesFromRobot(fileType) {

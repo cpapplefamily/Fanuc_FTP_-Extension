@@ -6,6 +6,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.8.7-dev] - 2026-11-16
+
+- After **Get ALL Files** or **Get All LS Files**, if the robot (found by folder, then by IP) has no descriptions file, ask to create it from the robot's I/O and register comments: **Create**, **Not now**, or **Don't ask again** for that robot.
+
 ## [0.8.6-dev] - 2026-11-16
 
 - Add **Get Descriptions from Robot**: connects to the robot, downloads only the five comment files, and saves the comments to a descriptions file.

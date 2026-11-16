@@ -158,6 +158,14 @@ The robot already has comments for its I/O and registers. Copy them into a descr
 
 The downloaded files are deleted when it is done. The descriptions file opens, and the descriptions appear in your LS files right away.
 
+**Automatic prompt after a download:** after **Get ALL Files from Robot** or **Get All LS Files from Robot**, the extension checks whether that robot has a descriptions file. The robot is the one whose folder holds the download, or the named robot with the IP you picked. If its file is missing or has no rows, you are asked:
+
+- **Create**: saves the robot's comments to `.vscode/descriptions/<robot>.csv` right away, with no second IP prompt. After an LS-only download, the five comment files are fetched in the same connection and deleted afterwards.
+- **Not now**: asks again after the next download.
+- **Don't ask again for \<robot\>**: stops asking for that robot in this workspace. You can still use **Get Descriptions from Robot** at any time.
+
+Downloads from an IP that is not a named robot are not checked, because descriptions belong to a named robot.
+
 **Create Descriptions from Backup** works the same way, starting from step 3: right-click a backup folder such as `2026-11-16-ALL_01` and run **MNAutomation → Descriptions → Create Descriptions from Backup**.
 
 | File on the robot / in the backup | Descriptions read |
