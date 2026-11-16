@@ -6,6 +6,18 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.9.11-dev] - 2026-11-16
+
+- **Get from Robot** and **Send to Robot** are now at the top of the MNAutomation menu.
+
+## [0.9.10-dev] - 2026-11-16
+
+- Group the robot transfer commands into **MNAutomation → Get from Robot** (Get ALL Files, Get All LS Files, Get Update LS Folder, Get Update For This LS File) and **MNAutomation → Send to Robot** (Send This LS File, Send Folder) submenus.
+
+## [0.9.9-dev] - 2026-11-16
+
+- Move the four snippet commands into a **MNAutomation → Snippets** submenu.
+- Menu items that only apply to an LS file (**Verify LS File**, **Rename LS File**) or a folder (**Send Folder**, **Create Descriptions from Backup**) are now shown greyed out instead of hidden when they do not apply.
 - Git not available: clearer warning ("Git isn't installed or VS Code's Git is turned off") with a link to https://git-scm.com/install, and **OK** / **Don't Remind Me** buttons. Transfers are never affected.
 - Never offer to create a git repository inside an SVN working copy (`.svn` in the folder or above). An existing git repository there is still used.
 - New **MNAutomation → Reset Robot FTP Reminders** turns back on every "Don't Remind Me" / "Don't ask again" choice (Git warning, create-descriptions question).

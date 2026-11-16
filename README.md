@@ -428,6 +428,8 @@ Use the commands available in the command palette or keybindings to interact wit
 
 # Snippet Triggers and Descriptions
 
+The snippet commands are in the **MNAutomation → Snippets** submenu: **Open User Fanuc Snippets**, **Create/Open Project Fanuc Snippets File**, **Load External Fanuc Snippets**, and **Clear External Fanuc Snippets**.
+
 Fanuc snippets are loaded in three additive levels:
 
 1. **Built-in** — Defaults supplied by the extension.

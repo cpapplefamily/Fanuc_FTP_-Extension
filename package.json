@@ -3,7 +3,7 @@
   "displayName": "Robot FTP",
   "description": "VSCODE extension to FTP *.ls file to Fanuc Robot",
   "publisher": "CoreyApplegate",
-  "version": "0.9.8-dev",
+  "version": "0.9.11-dev",
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -57,7 +57,8 @@
     "commands": [
       {
         "command": "extension.verifyLsFile",
-        "title": "Verify LS File"
+        "title": "Verify LS File",
+        "enablement": "!explorerResourceIsFolder && resourceExtname =~ /\\.ls$/i"
       },
       {
         "command": "extension.openSettings",
@@ -81,7 +82,8 @@
       },
       {
         "command": "extension.renameLsFile",
-        "title": "Rename LS File"
+        "title": "Rename LS File",
+        "enablement": "!explorerResourceIsFolder && resourceExtname =~ /\\.ls$/i"
       },
       {
         "command": "extension.listLsFilesAndInsert",
@@ -133,7 +135,8 @@
         "icon": {
           "light": "./src/images/icon-light.png",
           "dark": "./src/images/icon-dark.png"
-        }
+        },
+        "enablement": "explorerResourceIsFolder"
       },
       {
         "command": "extension.editDescriptions",
@@ -141,7 +144,8 @@
       },
       {
         "command": "extension.createDescriptionsFromBackup",
-        "title": "Create Descriptions from Backup"
+        "title": "Create Descriptions from Backup",
+        "enablement": "explorerResourceIsFolder"
       },
       {
         "command": "extension.getDescriptionsFromRobot",
@@ -190,6 +194,18 @@
       {
         "id": "MNAutomation.lsChecker",
         "label": "LS Checker"
+      },
+      {
+        "id": "MNAutomation.snippets",
+        "label": "Snippets"
+      },
+      {
+        "id": "MNAutomation.send",
+        "label": "Send to Robot"
+      },
+      {
+        "id": "MNAutomation.get",
+        "label": "Get from Robot"
       }
     ],
     "menus": {
@@ -212,53 +228,23 @@
         },
         {
           "command": "extension.renameLsFile",
-          "when": "!explorerResourceIsFolder && resourceExtname =~ /\\.ls$/i",
           "group": "fanucHelpers"
         },
         {
-          "command": "extension.uploadFileToRobot",
-          "group": "fanucSend"
-        },
-        {
-          "command": "extension.uploadFolderToRobot",
-          "when": "explorerResourceIsFolder",
-          "group": "fanucSend"
+          "submenu": "MNAutomation.send",
+          "group": "1_robot@2"
         },
         {
           "submenu": "MNAutomation.descriptions",
           "group": "fanucNavigation"
         },
         {
-          "command": "extension.selectExternalSnippets",
+          "submenu": "MNAutomation.snippets",
           "group": "fanucNavigation"
         },
         {
-          "command": "extension.openUserSnippets",
-          "group": "fanucNavigation"
-        },
-        {
-          "command": "extension.openProjectSnippets",
-          "group": "fanucNavigation"
-        },
-        {
-          "command": "extension.clearExternalSnippets",
-          "group": "fanucNavigation"
-        },
-        {
-          "command": "extension.downloadAllFiles",
-          "group": "fanucGet"
-        },
-        {
-          "command": "extension.downloadLsFiles",
-          "group": "fanucGet"
-        },
-        {
-          "command": "extension.updateFilesFromRobotLsFiles",
-          "group": "fanucGet"
-        },
-        {
-          "command": "extension.updateSelectedFileFromRobot",
-          "group": "fanucGet"
+          "submenu": "MNAutomation.get",
+          "group": "1_robot@1"
         },
         {
           "command": "extension.editRobotList",
@@ -280,7 +266,6 @@
         },
         {
           "command": "extension.createDescriptionsFromBackup",
-          "when": "explorerResourceIsFolder",
           "group": "1_create@2"
         },
         {
@@ -291,7 +276,6 @@
       "MNAutomation.lsChecker": [
         {
           "command": "extension.verifyLsFile",
-          "when": "!explorerResourceIsFolder && resourceExtname =~ /\\.ls$/i",
           "group": "1_check@1"
         },
         {
@@ -301,6 +285,52 @@
         {
           "command": "extension.resetLsVerifierRules",
           "group": "2_rules@2"
+        }
+      ],
+      "MNAutomation.snippets": [
+        {
+          "command": "extension.openUserSnippets",
+          "group": "1_open@1"
+        },
+        {
+          "command": "extension.openProjectSnippets",
+          "group": "1_open@2"
+        },
+        {
+          "command": "extension.selectExternalSnippets",
+          "group": "2_external@1"
+        },
+        {
+          "command": "extension.clearExternalSnippets",
+          "group": "2_external@2"
+        }
+      ],
+      "MNAutomation.send": [
+        {
+          "command": "extension.uploadFileToRobot",
+          "group": "1_send@1"
+        },
+        {
+          "command": "extension.uploadFolderToRobot",
+          "group": "1_send@2"
+        }
+      ],
+      "MNAutomation.get": [
+        {
+          "command": "extension.downloadAllFiles",
+          "group": "1_new@1"
+        },
+        {
+          "command": "extension.downloadLsFiles",
+          "group": "1_new@2"
+        },
+        {
+          "command": "extension.updateFilesFromRobotLsFiles",
+          "group": "2_update@1"
+        },
+        {
+          "command": "extension.updateSelectedFileFromRobot",
+          "group": "2_update@2"
         }
       ]
     },
