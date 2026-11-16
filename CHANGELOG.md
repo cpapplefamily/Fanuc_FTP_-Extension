@@ -6,6 +6,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Git not available: clearer warning ("Git isn't installed or VS Code's Git is turned off") with a link to https://git-scm.com/install, and **OK** / **Don't Remind Me** buttons. Transfers are never affected.
+- Never offer to create a git repository inside an SVN working copy (`.svn` in the folder or above). An existing git repository there is still used.
+- New **MNAutomation → Reset Robot FTP Reminders** turns back on every "Don't Remind Me" / "Don't ask again" choice (Git warning, create-descriptions question).
+
 ## [0.9.8-dev] - 2026-11-16
 
 - New **MNAutomation → LS Checker** submenu with **Verify LS File**, **Edit LS Verifier Rules**, and the new **Reset LS Verifier Rules to Defaults** (asks first and saves a backup of your current rules).

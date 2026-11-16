@@ -5,7 +5,8 @@ const path = require('path');
  *
  * result   { kind: 'download' | 'upload', operation, files: [absolute paths], folder, robotName, ip }
  * settings { onDownload, onUpload: 'off'|'prompt', commitMode: 'auto'|'confirm', messageTemplate, push: 'never'|'ask'|'always', offerInit }
- * git      { findRepo(folder) → repo|null, initChoices(folder) → [paths], init(folder) → repo|null }
+ * git      { findRepo(folder) → repo|null, initChoices(folder) → [paths], init(folder) → repo|null,
+ *            skipInitReason(folder) → string|undefined (optional; e.g. inside an SVN working copy: never offer init) }
  *            A repo returned by init may list createdFiles (e.g. its new .gitignore); they join the first commit.
  * repo     { root, branch(), hasRemote(), refresh(), changedPaths() → paths (unstaged + untracked), stagedPaths() → paths,
  *            add(paths), unstage(paths), commit(message), push(), showInSourceControl(message) }
@@ -74,11 +75,21 @@ function mergeGitignore(existingText, patterns) {
     return { text: existing + prefix + header + added.join(eol) + eol, added };
 }
 
-/** Finds the repo for the transfer folder, offering git init when allowed. Returns the repo or undefined. */
+/**
+ * Finds the repo for the transfer folder, offering git init when allowed.
+ * Returns { repo } or { repo: undefined, status } explaining why there is none.
+ */
 async function resolveRepo(git, ui, settings, folder) {
     const repo = await git.findRepo(folder);
-    if (repo || !settings.offerInit) {
-        return repo || undefined;
+    if (repo) {
+        return { repo };
+    }
+    if (!settings.offerInit) {
+        return { status: 'no-repo' };
+    }
+    // e.g. an SVN working copy: never offer to create a git repository there.
+    if (git.skipInitReason && git.skipInitReason(folder)) {
+        return { status: 'other-vcs' };
     }
     // A pick list instead of buttons: full paths are too long for notification buttons.
     const items = git.initChoices(folder).map(choice => {
@@ -96,18 +107,19 @@ async function resolveRepo(git, ui, settings, folder) {
         placeHolder: `${path.basename(folder) || folder} is not in a git repository. Create one to record robot transfers?`
     });
     if (!picked || !picked.folder) {
-        return undefined;
+        return { status: 'no-repo' };
     }
     const created = await git.init(picked.folder);
-    if (created) {
-        created.isNew = true;
+    if (!created) {
+        return { status: 'no-repo' };
     }
-    return created || undefined;
+    created.isNew = true;
+    return { repo: created };
 }
 
 /**
  * The commit flow. Returns a short status string for logging and tests:
- * 'off' | 'no-files' | 'no-repo' | 'no-changes' | 'cancelled' | 'staged' | 'committed' | 'pushed'
+ * 'off' | 'no-files' | 'no-repo' | 'other-vcs' | 'no-changes' | 'cancelled' | 'staged' | 'committed' | 'pushed'
  */
 async function offerCommit({ git, ui, settings, result, now }) {
     const mode = result.kind === 'upload' ? settings.onUpload : settings.onDownload;
@@ -118,9 +130,9 @@ async function offerCommit({ git, ui, settings, result, now }) {
         return 'no-files';
     }
 
-    const repo = await resolveRepo(git, ui, settings, result.folder);
+    const { repo, status } = await resolveRepo(git, ui, settings, result.folder);
     if (!repo) {
-        return 'no-repo';
+        return status;
     }
     await repo.refresh();
 

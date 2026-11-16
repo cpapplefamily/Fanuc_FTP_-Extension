@@ -199,6 +199,7 @@ async function activate(context) {
         () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)
     ));
     context.subscriptions.push(vscode.commands.registerCommand('extension.editRobotList', openRobotList));
+    context.subscriptions.push(vscode.commands.registerCommand('extension.resetReminders', resetReminders));
 
     const managedSnippetFilePath = ensureManagedSnippetFile(context);
     const loadedManagedSnippets = loadSnippetFile(managedSnippetFilePath, 'User', false);
@@ -1189,6 +1190,27 @@ async function f_downloadFromRobot(destinationUri, isFolder, fileType, saveType)
 
 const SKIP_DESCRIPTIONS_PROMPT_KEY = 'robotFtp.skipDescriptionsPrompt';
 
+/** Turns back on every "Don't remind me" / "Don't ask again" choice. */
+async function resetReminders() {
+    const turnedOff = [];
+    if (extensionContext.globalState.get(GIT_UNAVAILABLE_DONT_REMIND_KEY, false)) {
+        turnedOff.push('the warning that Git is not available');
+    }
+    const skippedRobots = extensionContext.workspaceState.get(SKIP_DESCRIPTIONS_PROMPT_KEY, []);
+    if (skippedRobots.length > 0) {
+        turnedOff.push(`the question to create descriptions for ${skippedRobots.join(', ')} (this workspace)`);
+    }
+    if (turnedOff.length === 0) {
+        vscode.window.showInformationMessage('No Robot FTP reminders are turned off.');
+        return;
+    }
+    await extensionContext.globalState.update(GIT_UNAVAILABLE_DONT_REMIND_KEY, undefined);
+    await extensionContext.workspaceState.update(SKIP_DESCRIPTIONS_PROMPT_KEY, undefined);
+    gitUnavailableWarned = false;
+    outputChannel.appendLine(`Reminders turned back on: ${turnedOff.join('; ')}`);
+    vscode.window.showInformationMessage(`Turned back on: ${turnedOff.join('; ')}.`);
+}
+
 /**
  * After a download: the named robot (by folder, then by IP) whose descriptions file is missing or empty,
  * unless the user chose "Don't ask again" for it. Returns { workspaceRoot, robot, filePath } or undefined.
@@ -1413,6 +1435,8 @@ async function f_updateSelectedFileFromRobot(uri, fileType) {
 // ---- Git commits after robot transfers ------------------------------------
 
 let gitUnavailableWarned = false;
+const GIT_UNAVAILABLE_DONT_REMIND_KEY = 'robotFtp.git.dontRemindUnavailable';
+const GIT_INSTALL_URL = 'https://git-scm.com/install';
 
 /** VS Code's built-in Git extension API, or undefined (warns once per session). */
 async function getGitApi() {
@@ -1440,11 +1464,37 @@ async function getGitApi() {
     } catch (error) {
         outputChannel.appendLine(`Git: could not load the Git extension: ${error.message}`);
     }
-    if (!gitUnavailableWarned) {
+    // Once per session, unless the user chose "Don't Remind Me". Commits start working by themselves once git is available.
+    if (!gitUnavailableWarned && !extensionContext.globalState.get(GIT_UNAVAILABLE_DONT_REMIND_KEY, false)) {
         gitUnavailableWarned = true;
-        vscode.window.showWarningMessage('Robot FTP: VS Code\'s Git extension is not available, so robot transfers are not committed. Enable the built-in Git extension (git.enabled) to use this.');
+        const dontRemind = 'Don\'t Remind Me';
+        vscode.window.showWarningMessage(
+            `Robot FTP: robot transfers can't be committed because Git isn't installed or VS Code's Git is turned off. [Install Git](${GIT_INSTALL_URL}), or turn on the setting git.enabled. Transfers still work.`,
+            'OK', dontRemind
+        ).then(async choice => {
+            if (choice === dontRemind) {
+                await extensionContext.globalState.update(GIT_UNAVAILABLE_DONT_REMIND_KEY, true);
+                outputChannel.appendLine('Git: will not remind again that Git is unavailable.');
+            }
+        });
     }
+    outputChannel.appendLine('Git: not available (not installed or turned off); skipping the commit.');
     return undefined;
+}
+
+/** The SVN working copy root at or above folderPath (a folder containing .svn), or undefined. */
+function findSvnRoot(folderPath) {
+    let current = path.resolve(folderPath);
+    for (;;) {
+        if (fs.existsSync(path.join(current, '.svn'))) {
+            return current;
+        }
+        const parent = path.dirname(current);
+        if (parent === current) {
+            return undefined;
+        }
+        current = parent;
+    }
 }
 
 /** Nearest folder at or above folderPath that contains .git. */
@@ -1494,6 +1544,11 @@ function gitAdapter(api) {
             return repository ? adaptRepository(repository) : null;
         },
         initChoices: folder => initChoicesFor(folder, getWorkspaceRoot(folder)),
+        // Inside an SVN working copy: don't offer to create a git repository there.
+        skipInitReason: folder => {
+            const svnRoot = findSvnRoot(folder);
+            return svnRoot ? `${folder} is in an SVN working copy (${svnRoot})` : undefined;
+        },
         init: async folder => {
             const repository = await api.init(vscode.Uri.file(folder));
             outputChannel.appendLine(`Git: initialized a repository in ${folder}`);

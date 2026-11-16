@@ -68,6 +68,10 @@
         "title": "Edit Robot List"
       },
       {
+        "command": "extension.resetReminders",
+        "title": "Reset Robot FTP Reminders"
+      },
+      {
         "command": "extension.openLsVerifierRules",
         "title": "Edit LS Verifier Rules"
       },
@@ -258,6 +262,10 @@
         },
         {
           "command": "extension.editRobotList",
+          "group": "z_fanucSettings"
+        },
+        {
+          "command": "extension.resetReminders",
           "group": "z_fanucSettings"
         },
         {

@@ -204,6 +204,18 @@ suite('Git commits after robot transfers', () => {
         assert.match(ui.shown.pick[0].options.placeHolder, /^LS is not in a git repository/);
     });
 
+    test('inside an SVN working copy: no init offer, but an existing git repo is still used', async () => {
+        const a = p('ST02', 'LS', 'A.LS');
+        const ui = fakeUi();
+        const svn = git(null, { skipInitReason: () => 'in an SVN working copy' });
+        assert.strictEqual(await offerCommit({ git: svn, ui, settings: SETTINGS, result: download([a]) }), 'other-vcs');
+        assert.strictEqual(ui.shown.pick.length, 0, 'no "create repository" question');
+
+        const repo = fakeRepo({ changed: [a] });
+        const gitInsideSvn = git(repo, { skipInitReason: () => 'in an SVN working copy' });
+        assert.strictEqual(await offerCommit({ git: gitInsideSvn, ui: fakeUi(), settings: SETTINGS, result: download([a]) }), 'committed');
+    });
+
     test('push: never, ask, always, no remote, failure', async () => {
         const a = p('ST02', 'LS', 'A.LS');
         const run = (settings, repo, ui = fakeUi()) => offerCommit({ git: git(repo), ui, settings, result: download([a]) });

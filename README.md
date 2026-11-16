@@ -325,6 +325,16 @@ Details:
 
 All settings can be set per workspace, so one customer project can turn commits off without affecting others.
 
+### Without Git, or in SVN folders
+
+Only the commit prompts need Git. Downloads, uploads, the LS checker, descriptions and snippets work the same without it.
+
+- **Git not installed, or VS Code's Git turned off (`git.enabled`):** transfers work normally and are not committed. The first transfer in each VS Code session shows a warning with a link to [install Git](https://git-scm.com/install). Choose **OK** to be reminded next session, or **Don't Remind Me** to stop the warning. Once Git is installed, commits start working without changing any setting.
+- **SVN working copies** (a `.svn` folder in the transfer folder or above it): the extension never offers to create a git repository there. If the folder is also inside a git repository, that repository is still used.
+- To stop all commit prompts in a workspace, set `robotFtp.git.onDownload` and `robotFtp.git.onUpload` to `off`.
+
+**Turning reminders back on:** **MNAutomation → Reset Robot FTP Reminders** turns back on every "Don't Remind Me" / "Don't ask again" choice: the Git warning, and the question to create descriptions for a robot (in the current workspace).
+
 ### Files git should ignore
 
 When the extension creates a repository, it writes `.gitignore` in the repository folder with the patterns from `robotFtp.git.ignorePatterns`. The defaults are `*.Sem` and `*.Wrk` (PLC work files). If a `.gitignore` is already there, only patterns that are missing are added.
