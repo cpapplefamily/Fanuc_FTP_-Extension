@@ -6,12 +6,17 @@ const csv = require('csv-parser'); // Install csv-parser for reading CSV files
 const { createRenameLsCommand } = require('./renameLs');
 const { registerLsVerifier } = require('./lsVerifier');
 const {
+    IP_PATTERN, OTHER_OPTION, cleanRecentIps, addRecentIp, isValidPort, getProjectIpsPath,
+    readProjectConfig, saveProjectRecentIp, saveProjectRobot, ensureProjectFile, buildIpOptions, folderChoices
+} = require('./robotIps');
+const {
     loadSnippetDefinitions,
     PROJECT_SNIPPETS_TEMPLATE,
     USER_SNIPPETS_TEMPLATE
 } = require('./externalSnippets');
 
 const outputChannel = vscode.window.createOutputChannel("Robot File Sync");
+let extensionContext;
 
 const EXTERNAL_SNIPPETS_STATE_KEY = 'robotFtp.externalSnippetsPath';
 const EXTERNAL_SNIPPETS_CONFIG_KEY = 'externalSnippetsFile';
@@ -154,6 +159,7 @@ function createExternalSnippetCompletionProvider() {
 
 // Make the activate function async
 async function activate(context) {
+    extensionContext = context;
     outputChannel.show();
     registerLsVerifier(vscode, context, outputChannel);
     context.subscriptions.push(vscode.commands.registerCommand(
@@ -163,6 +169,7 @@ async function activate(context) {
         'extension.openSettings',
         () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)
     ));
+    context.subscriptions.push(vscode.commands.registerCommand('extension.editRobotList', openRobotList));
 
     const managedSnippetFilePath = ensureManagedSnippetFile(context);
     const loadedManagedSnippets = loadSnippetFile(managedSnippetFilePath, 'User', false);
@@ -627,11 +634,16 @@ async function withRobotConnection(directoryPath, operationName, callback) {
     
     try {
         // Get robot IP address
-        ipAddress = await getRobotIp(directoryPath);
-        vscode.window.showInformationMessage(`Using IP address: ${ipAddress}`);
-        
-        // Connect to robot with timeout
+        const robot = await getRobotIp(directoryPath);
+        ipAddress = robot.ip;
+
+        // Connect to robot with timeout. A robot's own port wins over the Port setting.
         const ftpConfig = getRobotConfig();
+        const port = robot.port ?? ftpConfig.port;
+        const robotLabel = robot.name ? `${robot.name} (${ipAddress}:${port})` : `${ipAddress}:${port}`;
+        vscode.window.showInformationMessage(`Using robot ${robotLabel}`);
+        outputChannel.appendLine(`${operationName}: connecting to ${robotLabel}`);
+        
         client.ftp.verbose = true;
         
         // Create timeout promise
@@ -643,7 +655,7 @@ async function withRobotConnection(directoryPath, operationName, callback) {
         await Promise.race([
             client.access({
                 host: ipAddress,
-                port: ftpConfig.port,
+                port,
                 user: ftpConfig.username,
                 password: ftpConfig.password,
                 secure: false
@@ -945,198 +957,170 @@ async function f_updateSelectedFileFromRobot(uri, fileType) {
     );
 }
 
-const IP_PATTERN = /^(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)$/;
-const RECENT_IPS_FILE = 'recent-ips.json';
-const MAX_RECENT_IPS = 5;
+const RECENT_IPS_STATE_KEY = 'robotFtp.recentIps';
+const BUILT_IN_IPS = [
+    { ip: '192.168.10.124', description: 'Default IP address' },
+    { ip: '192.168.95.112', description: 'Aggressive Hydraulics' },
+    { ip: '127.0.0.2', description: 'RoboGuide LoopBack' }
+];
 
-function getRecentIpsFilePath(directoryPath) {
-    return path.join(directoryPath, RECENT_IPS_FILE);
+/** The workspace folder path that holds the robot list for directoryPath, or undefined outside any workspace folder. */
+function getWorkspaceRoot(directoryPath) {
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(directoryPath));
+    return workspaceFolder ? workspaceFolder.uri.fsPath : undefined;
 }
 
-function ensureRecentIpsFile(directoryPath) {
-    const recentIpsPath = getRecentIpsFilePath(directoryPath);
-
-    if (fs.existsSync(recentIpsPath)) {
-        return;
-    }
-
+function readIpConfig(workspaceRoot) {
     try {
-        fs.mkdirSync(directoryPath, { recursive: true });
-        fs.writeFileSync(recentIpsPath, JSON.stringify([], null, 2), 'utf8');
-        outputChannel.appendLine(`${RECENT_IPS_FILE} created at ${recentIpsPath}`);
-    } catch (error) {
-        outputChannel.appendLine(`Warning: Failed to create ${RECENT_IPS_FILE}: ${error.message}`);
-    }
-}
-
-function readRecentIps(directoryPath) {
-    ensureRecentIpsFile(directoryPath);
-    const recentIpsPath = getRecentIpsFilePath(directoryPath);
-
-    if (!fs.existsSync(recentIpsPath)) {
-        return [];
-    }
-
-    try {
-        const recentIps = JSON.parse(fs.readFileSync(recentIpsPath, 'utf8'));
-        if (!Array.isArray(recentIps)) {
-            outputChannel.appendLine(`${RECENT_IPS_FILE} is not an array. Ignoring recent IP history.`);
-            return [];
+        if (!workspaceRoot) {
+            return { robots: [], recent: cleanRecentIps(extensionContext.globalState.get(RECENT_IPS_STATE_KEY, [])) };
         }
-
-        return recentIps.filter(ip => typeof ip === 'string' && IP_PATTERN.test(ip)).slice(0, MAX_RECENT_IPS);
+        const config = readProjectConfig(workspaceRoot);
+        for (const problem of config.problems) {
+            outputChannel.appendLine(`Warning: ${getProjectIpsPath(workspaceRoot)}: ${problem}`);
+        }
+        return config;
     } catch (error) {
-        outputChannel.appendLine(`Warning: Failed to read ${RECENT_IPS_FILE}: ${error.message}`);
-        return [];
+        outputChannel.appendLine(`Warning: Failed to read robot list: ${error.message}`);
+        vscode.window.showWarningMessage(`Could not read the robot list: ${error.message}`);
+        return { robots: [], recent: [] };
     }
 }
 
-function saveRecentIp(directoryPath, ipAddress) {
-    if (!IP_PATTERN.test(ipAddress)) {
-        return;
-    }
-
+async function saveRecentIp(workspaceRoot, ipAddress) {
     try {
-        fs.mkdirSync(directoryPath, { recursive: true });
-        const recentIps = readRecentIps(directoryPath);
-        const updatedIps = [
-            ipAddress,
-            ...recentIps.filter(recentIp => recentIp !== ipAddress)
-        ].slice(0, MAX_RECENT_IPS);
-
-        fs.writeFileSync(getRecentIpsFilePath(directoryPath), JSON.stringify(updatedIps, null, 2), 'utf8');
-        outputChannel.appendLine(`Recent robot IPs updated: ${updatedIps.join(', ')}`);
+        let updatedIps;
+        if (workspaceRoot) {
+            updatedIps = saveProjectRecentIp(workspaceRoot, ipAddress);
+        } else {
+            updatedIps = addRecentIp(extensionContext.globalState.get(RECENT_IPS_STATE_KEY, []), ipAddress);
+            await extensionContext.globalState.update(RECENT_IPS_STATE_KEY, updatedIps);
+        }
+        const location = workspaceRoot ? getProjectIpsPath(workspaceRoot) : 'VS Code global state';
+        outputChannel.appendLine(`Recent robot IPs updated (${location}): ${updatedIps.join(', ')}`);
     } catch (error) {
         outputChannel.appendLine(`Warning: Failed to save recent IP history: ${error.message}`);
     }
 }
 
-function buildIpOptions(directoryPath, defaultIp) {
-    const builtInOptions = [
-        { label: defaultIp, description: 'Default IP address' },
-        { label: "192.168.95.112", description: 'Aggressive Hydraulics' },
-        { label: "127.0.0.2", description: 'RoboGuide LoopBack' }
-    ];
-    const optionLabels = new Set(builtInOptions.map(option => option.label));
-    const recentOptions = readRecentIps(directoryPath)
-        .filter(ipAddress => !optionLabels.has(ipAddress))
-        .map(ipAddress => ({ label: ipAddress, description: 'Recent robot IP' }));
+/** After a custom IP is entered, optionally save it as a named robot. Returns the port to use (undefined = setting). */
+async function offerToSaveRobot(workspaceRoot, directoryPath, ipAddress, robots) {
+    const choice = await vscode.window.showQuickPick(
+        [
+            { label: 'Use once', description: 'Only add it to the recent list', save: false },
+            { label: 'Save as a named robot', description: 'Keep it in this project\'s robot list', save: true }
+        ],
+        { placeHolder: `Save ${ipAddress} as a named robot?` }
+    );
+    if (!choice || !choice.save) {
+        return undefined;
+    }
 
-    return [
-        ...recentOptions,
-        ...builtInOptions,
-        { label: 'Other', description: 'Enter a custom IP address' }
+    const name = await vscode.window.showInputBox({
+        prompt: 'Robot name (e.g., ST02)',
+        validateInput: value => value.trim() ? null : 'Enter a name.'
+    });
+    if (!name) {
+        return undefined;
+    }
+    const existing = robots.find(robot => robot.name.toLowerCase() === name.trim().toLowerCase());
+    if (existing) {
+        const replace = await vscode.window.showWarningMessage(
+            `A robot named "${existing.name}" (${existing.ip}) already exists. Replace it?`, { modal: true }, 'Replace'
+        );
+        if (replace !== 'Replace') {
+            return undefined;
+        }
+    }
+
+    const folderItems = [
+        { label: 'No folder', description: 'Do not sort this robot first in any folder', folder: undefined },
+        ...folderChoices(workspaceRoot, directoryPath).map(folder => ({
+            label: folder, description: 'Sort this robot first for commands in this folder', folder
+        }))
     ];
+    const folderPick = await vscode.window.showQuickPick(folderItems, {
+        placeHolder: 'Which folder belongs to this robot?'
+    });
+    if (!folderPick) {
+        return undefined;
+    }
+
+    const portInput = await vscode.window.showInputBox({
+        prompt: `FTP port for this robot. Leave blank to use the Port setting (currently ${getRobotConfig().port}).`,
+        placeHolder: 'e.g., 9125 for RoboGuide',
+        validateInput: value => !value.trim() || isValidPort(Number(value.trim())) ? null : 'Enter a port from 1 to 65535, or leave blank.'
+    });
+    if (portInput === undefined) {
+        return undefined;
+    }
+    const port = portInput.trim() ? Number(portInput.trim()) : undefined;
+
+    try {
+        saveProjectRobot(workspaceRoot, { name: name.trim(), ip: ipAddress, folder: folderPick.folder, port });
+        outputChannel.appendLine(`Saved robot ${name.trim()} (${ipAddress}) to ${getProjectIpsPath(workspaceRoot)}`);
+    } catch (error) {
+        vscode.window.showErrorMessage(`Could not save the robot: ${error.message}`);
+    }
+    return port;
 }
 
 /**
- * Retrieve or prompt for the robot's IP address.
- * 
- * @param {string} directoryPath - The directory path where ip.txt should be located.
- * @param {string} defaultIp - The default IP address to use if no file exists.
- * @returns {Promise<string>} - The selected or entered IP address.
+ * Prompt for the robot to connect to. Named robots and recent IPs come from the project's .vscode/robot-ftp.json.
+ *
+ * @param {string} directoryPath - The folder the command runs on. Its workspace folder selects the robot list, and it decides which robot is sorted first.
+ * @returns {Promise<{ip: string, port: (number|undefined), name: (string|undefined)}>} - port undefined means use the Port setting.
  */
-async function getRobotIp(directoryPath, defaultIp = "192.168.10.124") {
-    const fileName = "ip.txt";
-    const filePath = path.join(directoryPath, fileName);
+async function getRobotIp(directoryPath) {
+    const workspaceRoot = getWorkspaceRoot(directoryPath);
+    const { robots, recent } = readIpConfig(workspaceRoot);
+    const ipOptions = buildIpOptions({ robots, recent, workspaceRoot, targetPath: directoryPath, builtIns: BUILT_IN_IPS });
 
-    let fileIpAddress;
+    const selected = await vscode.window.showQuickPick(ipOptions, {
+        placeHolder: 'Select a robot or recent IP, or choose "Other" to enter an IP address.',
+        matchOnDescription: true
+    });
 
-    // Check if ip.txt exists in the directory
-    if (fs.existsSync(filePath)) {
-        try {
-            const fileContent = fs.readFileSync(filePath, 'utf8').trim();
-            if (fileContent) {
-                if (IP_PATTERN.test(fileContent)) {
-                    fileIpAddress = fileContent;
-                    saveRecentIp(directoryPath, fileIpAddress);
-                } else {
-                    vscode.window.showWarningMessage(`The file ${fileName} contains an invalid IP address.`);
-                }
-            } else {
-                vscode.window.showWarningMessage(`The file ${fileName} is empty.`);
-            }
-        } catch (error) {
-            vscode.window.showErrorMessage(`Failed to read ${fileName}: ${error.message}`);
-        }
-    } else {
-        const createFile = await vscode.window.showQuickPick(
-            [
-                { label: 'Yes', description: `Create ${fileName}` },
-                { label: 'No', description: 'Do not create the file' }
-            ],
-            {
-                placeHolder: `The file ${fileName} was not found. Would you like to create it?`,
-                canPickMany: false
-            }
-        );
-
-        if (createFile && createFile.label === 'Yes') {
-            const newIp = await vscode.window.showInputBox({
-                prompt: 'Enter an IP address to save in the new file:',
-                placeHolder: `e.g., ${defaultIp}`,
-                value: defaultIp,
-                validateInput: value => {
-                    return IP_PATTERN.test(value) ? null : 'Please enter a valid IP address.';
-                }
-            });
-
-            if (newIp) {
-                try {
-                    // Ensure the directory exists
-                    fs.mkdirSync(directoryPath, { recursive: true });
-                    // Create the file with the entered IP address
-                    fs.writeFileSync(filePath, newIp, 'utf8');
-                    vscode.window.showInformationMessage(`File ${fileName} created at ${filePath} with IP address: ${newIp}`);
-                    fileIpAddress = newIp;
-                    saveRecentIp(directoryPath, fileIpAddress);
-                } catch (error) {
-                    vscode.window.showErrorMessage(`Failed to create ${fileName}: ${error.message}`);
-                }
-            } else {
-                vscode.window.showWarningMessage('No IP address entered. File creation skipped.');
-            }
-        } else {
-            vscode.window.showInformationMessage('File creation skipped.');
-        }
+    if (!selected) {
+        throw new Error('An IP address selection is required.');
     }
 
-    if (!fileIpAddress) {
-        // Prompt user to select or enter an IP address if no IP is retrieved from the file
-        const ipOptions = buildIpOptions(directoryPath, defaultIp);
+    let ip = selected.ip;
+    let port = selected.port;
 
-        const selectedIp = await vscode.window.showQuickPick(ipOptions, {
-            placeHolder: 'Select a recent robot IP or choose "Other" to enter a custom IP.',
-            canPickMany: false
+    if (selected.kind === OTHER_OPTION) {
+        const customIp = await vscode.window.showInputBox({
+            prompt: 'Enter the custom IP address:',
+            placeHolder: 'e.g., 192.168.1.1',
+            validateInput: value => IP_PATTERN.test(value) ? null : 'Please enter a valid IP address.'
         });
 
-        if (!selectedIp) {
-            throw new Error('An IP address selection is required.');
+        if (!customIp) {
+            throw new Error('A custom IP address is required.');
         }
 
-        let ipAddress = selectedIp.label;
-
-        if (ipAddress === 'Other') {
-            const customIp = await vscode.window.showInputBox({
-                prompt: 'Enter the custom IP address:',
-                placeHolder: 'e.g., 192.168.1.1',
-                validateInput: value => {
-                    return IP_PATTERN.test(value) ? null : 'Please enter a valid IP address.';
-                }
-            });
-
-            if (!customIp) {
-                throw new Error('A custom IP address is required.');
-            }
-
-            ipAddress = customIp;
+        ip = customIp;
+        if (workspaceRoot) {
+            port = await offerToSaveRobot(workspaceRoot, directoryPath, ip, robots);
         }
-
-        saveRecentIp(directoryPath, ipAddress);
-        return ipAddress;
     }
 
-    return fileIpAddress;
+    await saveRecentIp(workspaceRoot, ip);
+    return { ip, port, name: selected.robotName };
+}
+
+async function openRobotList(resourceUri) {
+    const workspaceFolder = await selectWorkspaceFolder(resourceUri);
+    if (!workspaceFolder) {
+        vscode.window.showErrorMessage('Open a folder first. The robot list is stored in the folder\'s .vscode/robot-ftp.json.');
+        return;
+    }
+    try {
+        const filePath = ensureProjectFile(workspaceFolder.uri.fsPath);
+        await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.file(filePath)));
+    } catch (error) {
+        vscode.window.showErrorMessage(`Could not open the robot list: ${error.message}`);
+    }
 }
 
 /**

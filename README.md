@@ -118,7 +118,31 @@ The extension can be configured using VS Code settings. You can customize the FT
   - The FTP password for your robot (blank for RoboGuide)
   - Set in VS Code settings: `"robotFtp.password": ""`
 
-The extension will also prompt for an IP address of the robot. The default IP is 192.168.10.124, but you can also enter a custom IP. Once entered, the IP is saved to an `ip.txt` file in your workspace. The extension also creates `recent-ips.json` next to `ip.txt`, keeps the last five valid robot IPs there, and shows them first the next time you choose an IP.
+### Robots and IP addresses
+
+Every robot command asks which robot to use. The list comes from `.vscode/robot-ftp.json` in the workspace folder, so it is shared by every folder in the project:
+
+```json
+{
+  "robots": [
+    { "name": "ST02", "ip": "192.168.1.12", "folder": "Robots/ST02", "port": null },
+    { "name": "St04", "ip": "192.168.1.14", "folder": "Robots/St04", "port": null },
+    { "name": "RoboGuide", "ip": "127.0.0.2", "folder": null, "port": 9125 }
+  ],
+  "recent": ["192.168.1.14", "192.168.1.12"]
+}
+```
+
+- **`robots`**: named robots for the job. They are never removed automatically.
+  - `folder` (optional, relative to the workspace folder): when a command runs anywhere inside this folder, this robot is listed first and marked *this folder*. If several folders match, the deepest one wins.
+  - `port` (optional): the FTP port for this robot. Leave it out or set it to `null` to use the `robotFtp.port` setting.
+- **`recent`**: the last five IPs used in the project, newest first.
+
+The picker lists, in order: the robot for the current folder, recent IPs (with the robot name when known), the other named robots, the built-in IPs (192.168.10.124, RoboGuide 127.0.0.2), and **Other**. Choosing **Other** lets you type an IP and then save it as a named robot, choosing its folder and port.
+
+Use **MNAutomation → Edit Robot List** to open the file and rename robots, change IPs, or set folders and ports. Commit the file to the job's repository to share the robot list with your team.
+
+The file is only written when you use an IP or save a robot. Outside an open workspace folder, recent IPs are kept in VS Code's own storage and named robots are not available. Old `ip.txt` and `recent-ips.json` files are no longer used and can be deleted.
 
 ### Example Configuration (Standard Robot):
 ```json

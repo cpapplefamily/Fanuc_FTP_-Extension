@@ -6,6 +6,22 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.8.3-dev] - 2026-11-16
+
+- Add named robots to `.vscode/robot-ftp.json`. Each robot has a name and IP, and optionally a folder and an FTP port. Named robots stay in the list permanently, unlike the last-five recent IPs.
+- The robot whose folder contains the current file or folder is listed first in the picker.
+- A robot's own `port` is used when set; when it is missing or `null`, the `robotFtp.port` setting is used.
+- After entering a custom IP, you can save it as a named robot with a folder and port.
+- Add **Edit Robot List** to the MNAutomation menu.
+
+## [0.8.2-dev] - 2026-11-16
+
+- Recent robot IPs are now shared across the whole project in `.vscode/robot-ftp.json`, so every command (including sending an LS file from a new or dated download folder) shows them. Outside a workspace folder they are kept in VS Code storage. Per-folder `recent-ips.json` files are no longer read or created.
+
+## [0.8.1-dev] - 2026-11-16
+
+- Remove `ip.txt` support. The robot IP is always chosen from the picker, which lists recent IPs from `recent-ips.json`. Existing `ip.txt` files are ignored.
+
 ## [0.8.0-dev] - 2026-11-16
 
 - Add "Robot FTP Settings" to the MNAutomation context menu to open this extension's settings.
