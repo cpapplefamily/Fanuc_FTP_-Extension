@@ -59,6 +59,11 @@ function cleanRobots(list) {
         } else if (entry.folder !== undefined && entry.folder !== null && entry.folder !== '') {
             problems.push(`${where} (${name}) has an invalid folder; ignoring it.`);
         }
+        if (typeof entry.descriptions === 'string' && entry.descriptions.trim()) {
+            robot.descriptions = entry.descriptions.trim();
+        } else if (entry.descriptions !== undefined && entry.descriptions !== null && entry.descriptions !== '') {
+            problems.push(`${where} (${name}) has an invalid descriptions path; using .vscode/descriptions/${name}.csv.`);
+        }
         if (isValidPort(entry.port)) {
             robot.port = entry.port;
         } else if (entry.port !== undefined && entry.port !== null) {
@@ -119,6 +124,9 @@ function saveProjectRobot(workspaceRoot, robot) {
     const entry = { name: robot.name, ip: robot.ip, folder: robot.folder || null, port: robot.port ?? null };
     const index = robots.findIndex(existing => typeof existing?.name === 'string' && existing.name.trim().toLowerCase() === key);
     if (index >= 0) {
+        if (robots[index].descriptions) {
+            entry.descriptions = robots[index].descriptions;
+        }
         robots[index] = entry;
     } else {
         robots.push(entry);

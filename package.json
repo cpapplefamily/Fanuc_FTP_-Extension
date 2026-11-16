@@ -3,7 +3,7 @@
   "displayName": "Robot FTP",
   "description": "VSCODE extension to FTP *.ls file to Fanuc Robot",
   "publisher": "CoreyApplegate",
-  "version": "0.8.3-dev",
+  "version": "0.8.5-dev",
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -128,12 +128,8 @@
         }
       },
       {
-        "command": "extension.selectCSVFile",
-        "title": "Select CSV File For Hints",
-        "icon": {
-          "light": "./src/images/icon-light.png",
-          "dark": "./src/images/icon-dark.png"
-        }
+        "command": "extension.editDescriptions",
+        "title": "Edit Descriptions"
       }
     ],
     "keybindings": [
@@ -142,6 +138,28 @@
         "key": "ctrl+shift+l",
         "mac": "cmd+shift+l",
         "when": "editorTextFocus"
+      }
+    ],
+    "colors": [
+      {
+        "id": "robotFtp.robotDescriptionForeground",
+        "description": "Color of descriptions from the robot's own file (.vscode/descriptions/<robot>.csv). Default: the theme's inlay hint color (tan in the default dark theme).",
+        "defaults": {
+          "dark": "editorInlayHint.foreground",
+          "light": "editorInlayHint.foreground",
+          "highContrast": "editorInlayHint.foreground",
+          "highContrastLight": "editorInlayHint.foreground"
+        }
+      },
+      {
+        "id": "robotFtp.sharedDescriptionForeground",
+        "description": "Color of descriptions from the shared file (.vscode/descriptions/shared.csv). Default: pink.",
+        "defaults": {
+          "dark": "#C586C0",
+          "light": "#AF00DB",
+          "highContrast": "#D670D6",
+          "highContrastLight": "#AF00DB"
+        }
       }
     ],
     "submenus": [
@@ -188,7 +206,7 @@
           "group": "fanucSend"
         },
         {
-          "command": "extension.selectCSVFile",
+          "command": "extension.editDescriptions",
           "group": "fanucNavigation"
         },
         {
@@ -275,8 +293,7 @@
     "eslint": "^9.13.0"
   },
   "dependencies": {
-    "basic-ftp": "^5.0.5",
-    "csv-parser": "^3.0.0"
+    "basic-ftp": "^5.0.5"
   },
   "icon": "src/images/icon.png",
   "license": "MIT",

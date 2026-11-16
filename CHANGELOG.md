@@ -6,6 +6,19 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.8.5-dev] - 2026-11-16
+
+- Fix: descriptions were missing after a NOT operator, e.g. `IF (!DO[17]) THEN`. Only lines whose statement starts with `!` are treated as remarks.
+
+## [0.8.4-dev] - 2026-11-16
+
+- Move I/O and register descriptions to `.vscode/descriptions`: one CSV per named robot (`<name>.csv`), plus an optional `shared.csv` for all robots. The robot is found from the open LS file's folder, like the IP picker. A robot can point to another file with `"descriptions"` in `robot-ftp.json`.
+- Shared descriptions are shown in their own color. Both colors can be changed (`robotFtp.robotDescriptionForeground`, `robotFtp.sharedDescriptionForeground`), and hovering shows the source file.
+- Add descriptions for `RI`, `RO`, `AI`, `AO`, `GI`, `GO`, `UI`, `UO`, `PR`, and `SR` (in addition to `DI`, `DO`, `R`, `F`).
+- Descriptions update when you switch files or save a CSV, instead of loading once at startup.
+- Add **Edit Descriptions** to the MNAutomation menu. Remove **Select CSV File For Hints**. Old `descriptions.csv` files are ignored and no blank CSV files are created next to LS files.
+- Fix: **List ls Programs** (Ctrl+Shift+L) was not registered when no file was open at startup.
+
 ## [0.8.3-dev] - 2026-11-16
 
 - Add named robots to `.vscode/robot-ftp.json`. Each robot has a name and IP, and optionally a folder and an FTP port. Named robots stay in the list permanently, unlike the last-five recent IPs.

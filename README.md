@@ -1,7 +1,7 @@
 # Robot File Sync Extension for Visual Studio Code
 
 ## Overview
-This Visual Studio Code extension allows you to interact with a Fanuc robot via FTP for uploading and downloading files. It provides several commands to upload files, download files, and update existing files from the robot, as well as manage descriptions from a CSV file. The extension also integrates inlay hints into the editor for quick reference of descriptions related to certain keywords.
+This Visual Studio Code extension allows you to interact with a Fanuc robot via FTP for uploading and downloading files. It provides several commands to upload files, download files, and update existing files from the robot, and shows I/O and register descriptions from per-robot CSV files next to the matching code in the editor.
 
 ## Features
 
@@ -15,12 +15,10 @@ This Visual Studio Code extension allows you to interact with a Fanuc robot via 
 - Upload individual files or folders to the robot.
 - Show byte-level progress while large files are uploading.
 
-### CSV Descriptions:
-- Select and load a CSV file that contains descriptions for robot programs.
-- Automatically reload the descriptions when the CSV file changes.
-
-### Inlay Hints:
-- The extension provides inlay hints for specific keywords (e.g., `DO[x]` or `DI[x]`) based on descriptions from the CSV file.
+### I/O and Register Descriptions:
+- Show a description after `DI`, `DO`, `RI`, `RO`, `AI`, `AO`, `GI`, `GO`, `UI`, `UO`, `R`, `PR`, `SR`, and `F` references, e.g. `DO[1 Clamp closed]`.
+- One CSV file per named robot, plus an optional shared file for all robots. **Tan** descriptions come from the robot's own file and **pink** descriptions come from the shared file (see [What the colors mean](#what-the-colors-mean)).
+- Descriptions reload automatically when the CSV files are saved.
 
 ### File Insertion:
 - Insert `.ls` file names into the current document by selecting from a list.
@@ -80,22 +78,75 @@ Naming rules: [FANUC R-30iB operator's manual, section 4.1.1](https://robochalle
 5. **`extension.uploadFolderToRobot`**
    - Uploads an entire folder to the robot.
 
-6. **`extension.selectCSVFile`**
-   - Prompts the user to select a CSV file containing descriptions. Automatically loads the descriptions and watches for changes.
+6. **`extension.editDescriptions`** (MNAutomation → **Edit Descriptions**)
+   - Opens the descriptions file for the robot of the selected folder, the shared file, or another robot's file. Creates the file with a `Key,Description` header if it does not exist.
 
 7. **`extension.listLsFilesAndInsert`**
    - Lists `.ls` files in the current directory and allows the user to insert the file name into the active editor.
 
-## File Descriptions
-The CSV file used for descriptions should have two columns:
+## I/O and Register Descriptions
 
-- **Key**: A unique identifier (e.g., `DO[1]` or `DI[1]`).
-- **Description**: A textual description corresponding to the key.
+Descriptions are stored in the project's `.vscode/descriptions` folder:
 
-### Example of the CSV format:
+```
+.vscode/
+  robot-ftp.json        robot list (names, IPs, folders)
+  descriptions/
+    shared.csv          descriptions for every robot (optional)
+    ST02.csv            descriptions for robot ST02
+    St04.csv            descriptions for robot St04
+```
+
+When an LS file is open, the extension finds its robot the same way the IP picker does: the named robot whose `folder` contains the file (see [Robots and IP addresses](#robots-and-ip-addresses)). It then loads `shared.csv` first and that robot's file on top, so a robot's own description replaces the shared one for the same key. Files that are not inside any robot folder only use `shared.csv`.
+
+### What the colors mean
+
+> **PINK = shared description** (from `.vscode/descriptions/shared.csv`)
+>
+> **TAN = this robot's own description** (from `.vscode/descriptions/<robot name>.csv`)
+
+![Description colors: tan for robot descriptions, pink for shared descriptions](docs/images/description-colors.png)
+
+In this example the open LS file belongs to robot `RG`:
+
+| Line | Description | Color | Comes from |
+|---|---|---|---|
+| `DO[18 Gripper Close]=OFF` | Gripper Close | **Pink** | `shared.csv` (every robot) |
+| `DO[17 Gripper Open]=ON` | Gripper Open | **Tan** | `RG.csv` (only this robot) |
+
+- If both files have the same key, the robot's file wins and the description shows in **tan**.
+- Not sure where a description comes from? **Hover over it.** The tooltip names the file.
+- These are the default colors with VS Code's standard dark theme. Tan is your theme's normal inlay hint color, so it can look different in other themes. Pink is set by this extension (a darker magenta in light themes).
+
+To change the colors, add them to your VS Code settings:
+
+```json
+"workbench.colorCustomizations": {
+  "robotFtp.robotDescriptionForeground": "#4EC9B0",
+  "robotFtp.sharedDescriptionForeground": "#C586C0"
+}
+```
+
+A robot's file is named after the robot (`<name>.csv`). To use a different file, add `"descriptions": "path/to/file.csv"` (relative to the workspace folder) to that robot in `.vscode/robot-ftp.json`.
+
+Run **MNAutomation → Edit Descriptions** to open or create the right file. Old `descriptions.csv` files next to LS files are no longer read; copy their rows into `.vscode/descriptions/<robot>.csv` or `shared.csv`.
+
+### CSV format
+
+Two columns, with a `Key,Description` header row:
+
+```csv
 Key,Description
-DO[1],Digital output 1
-DI[1],Digital input 1
+DO[1],Clamp closed
+DI[1],Part present
+R[10],Part count
+PR[3],"Pounce, above fixture"
+```
+
+- **Key**: one of `DI`, `DO`, `RI`, `RO`, `AI`, `AO`, `GI`, `GO`, `UI`, `UO`, `R`, `PR`, `SR`, `F`, followed by `[number]`. Upper or lower case both work.
+- **Description**: the text to show. Put it in double quotes if it contains a comma.
+
+Descriptions are not shown inside `!` remarks, or on references that already carry a robot comment such as `DO[1:Clamp]`.
 
 ## Setup Instructions
 
@@ -164,8 +215,8 @@ The file is only written when you use an IP or save a robot. Outside an open wor
 
 Or configure via Settings UI: Search for "robotFtp" in VS Code settings.
 
-### CSV File:
-The extension expects a CSV file with descriptions. You can either use the default descriptions.csv or select a custom CSV file using the extension.selectCSVFile command.
+### Descriptions:
+See [I/O and Register Descriptions](#io-and-register-descriptions).
 
 ### Commands and Usage:
 Use the commands available in the command palette or keybindings to interact with the robot, upload/download files, or insert descriptions into your code.
