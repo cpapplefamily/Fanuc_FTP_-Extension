@@ -3,7 +3,7 @@
   "displayName": "Robot FTP",
   "description": "VSCODE extension to FTP *.ls file to Fanuc Robot",
   "publisher": "CoreyApplegate",
-  "version": "0.7.1-dev",
+  "version": "0.8.0-dev",
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -58,6 +58,10 @@
       {
         "command": "extension.verifyLsFile",
         "title": "Verify LS File"
+      },
+      {
+        "command": "extension.openSettings",
+        "title": "Robot FTP Settings"
       },
       {
         "command": "extension.openLsVerifierRules",
@@ -214,6 +218,10 @@
         {
           "command": "extension.updateSelectedFileFromRobot",
           "group": "fanucGet"
+        },
+        {
+          "command": "extension.openSettings",
+          "group": "z_fanucSettings"
         }
       ]
     },

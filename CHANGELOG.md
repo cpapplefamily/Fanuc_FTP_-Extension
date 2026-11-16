@@ -6,6 +6,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.8.0-dev] - 2026-11-16
+
+- Add "Robot FTP Settings" to the MNAutomation context menu to open this extension's settings.
+
 ## [0.7.1-dev] - 2026-11-08
 
 - Accept robot-wrapped multi-line `--eg:` remarks (bare `:` continuation lines, `;` only on the last line) and skip code checks inside remark text.

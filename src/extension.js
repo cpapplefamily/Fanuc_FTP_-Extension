@@ -159,6 +159,10 @@ async function activate(context) {
     context.subscriptions.push(vscode.commands.registerCommand(
         'extension.renameLsFile', createRenameLsCommand(vscode, outputChannel)
     ));
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'extension.openSettings',
+        () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)
+    ));
 
     const managedSnippetFilePath = ensureManagedSnippetFile(context);
     const loadedManagedSnippets = loadSnippetFile(managedSnippetFilePath, 'User', false);
