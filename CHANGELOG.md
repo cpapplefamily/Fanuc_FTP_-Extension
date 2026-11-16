@@ -6,6 +6,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.8.8-dev] - 2026-11-16
+
+- Fix snippet triggers that contained spaces, which VS Code cannot match: **Set Frames** now triggers on `frames` or `setframes`, **To DO** on `todo`, **CALL** on `CALL` (no trailing space), **Label** on `LBL`, both **Jump Label** snippets on `JMP` or `jmplbl`, and **Multi Line Text** on `eg`. The old triggers still work when picked from the list.
+- Fix the **Wait Sec** snippet description.
+- README: how to use snippets, a **Ctrl+Space** tip to open the snippet list, and that grey italic suggestions come from AI tools such as Copilot, not snippets.
+
 ## [0.8.7-dev] - 2026-11-16
 
 - After **Get ALL Files** or **Get All LS Files**, if the robot (found by folder, then by IP) has no descriptions file, ask to create it from the robot's I/O and register comments: **Create**, **Not now**, or **Don't ask again** for that robot.

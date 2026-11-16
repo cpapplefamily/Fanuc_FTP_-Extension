@@ -3,7 +3,7 @@
   "displayName": "Robot FTP",
   "description": "VSCODE extension to FTP *.ls file to Fanuc Robot",
   "publisher": "CoreyApplegate",
-  "version": "0.8.7-dev",
+  "version": "0.8.8-dev",
   "engines": {
     "vscode": "^1.95.0"
   },

@@ -300,7 +300,7 @@ For a project-only file, add the Fanuc language scope:
 {
   "Project Initialization": {
     "scope": "fanuctp",
-    "prefix": "PROJECT INIT",
+    "prefix": "projinit",
     "body": [
       ":  UFRAME_NUM=${1:1} ;",
       ":  UTOOL_NUM=${2:1} ;"
@@ -310,8 +310,22 @@ For a project-only file, add the Fanuc language scope:
 }
 ```
 
+### Using a snippet
+
+1. On an empty line, type the trigger, for example `frames`. Don't type the leading `:`; the snippet adds it.
+2. Pick the snippet from the suggestion list (it has a snippet icon) and press **Tab** or **Enter**. Press **Ctrl+Space** if the list does not open.
+3. Press **Tab** to move between the fields in the snippet.
+
+> **Tip: press Ctrl+Space to show the snippets.** If the suggestion list does not appear while you type, press **Ctrl+Space** to open it (also **Ctrl+Space** on Mac). This is most useful for triggers that contain a space, such as `set frames`: the list closes when you type the space and only comes back once the whole trigger is typed. Pressing **Ctrl+Space** brings it back at any point.
+>
+> **Use one-word triggers when you can.** The one-word triggers below (`frames`, `todo`, `LBL`, `JMP`, `eg`) show up as soon as you start typing. The same advice applies to snippets you add in your own files.
+>
+> **Grey italic text is not a snippet.** Text that appears in grey italics as you type comes from an AI inline-suggestion tool such as GitHub Copilot, not from this extension. Press **Esc** to dismiss it.
+
+### Built-in snippets
+
 1. **Set Frames**  
-   - **Trigger**: `set frames`  
+   - **Trigger**: `frames` or `setframes`  
    - **Description**: Set Up Frames
 
 2. **If () THEN**  
@@ -335,31 +349,31 @@ For a project-only file, add the Fanuc language scope:
    - **Description**: Main Header
 
 7. **Multi Line Text**  
-   - **Trigger**: `--eg:`  
+   - **Trigger**: `eg`  
    - **Description**: Multi Line Text
 
 8. **To DO**  
-   - **Trigger**: `To do`  
+   - **Trigger**: `todo`  
    - **Description**: Must Return to Complete
 
 9. **Label**  
-   - **Trigger**: `LBL[]`  
+   - **Trigger**: `LBL`  
    - **Description**: Add label
 
 10. **Jump Label**  
-    - **Trigger**: `JMP LBL[]`  
+    - **Trigger**: `JMP` or `jmplbl`  
     - **Description**: Add Jump label
 
 11. **Jump Label With Label**  
-    - **Trigger**: `JMP LBL[]`  
+    - **Trigger**: `JMP` or `jmplbl`  
     - **Description**: Add Jump label
 
 12. **Wait Sec**  
     - **Trigger**: `WAIT`  
-    - **Description**: Add Jump label
+    - **Description**: Wait for a number of seconds
 
 13. **CALL**  
-    - **Trigger**: `CALL `  
+    - **Trigger**: `CALL`  
     - **Description**: Call Program
 
 ## Acknowledgments

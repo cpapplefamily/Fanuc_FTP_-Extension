@@ -1,6 +1,6 @@
 {
     "Set Frames": {
-        "prefix": "set frames",  // Trigger word for snippets
+        "prefix": ["setframes", "frames", "set frames"],  // Single words: VS Code stops matching at a space
         "body": [
             ":  --eg:   Set Frames ;",
             ":  UFRAME_NUM=${1:1} ;",
@@ -83,7 +83,7 @@
     },
 
     "Multi Line Text": {
-        "prefix": "--eg:",  // Trigger word for snippets
+        "prefix": ["eg", "--eg:"],  // "eg": VS Code does not treat - or : as part of a word
         "body": [
             "--eg: "
         ],
@@ -91,7 +91,7 @@
     },
 
     "To DO": {
-        "prefix": "To do",
+        "prefix": ["todo", "To do"],
         "body": [
             ":  !************************ ;",
             ":  !******** To Do  ******** ;",
@@ -103,7 +103,7 @@
     },
 
     "Label": {
-        "prefix": "LBL[]",
+        "prefix": ["LBL", "LBL[]"],
         "body": [
             ":  LBL[$1:$2] ;",
             ":  ;"
@@ -112,7 +112,7 @@
     },
 
     "Jump Label": {
-        "prefix": "JMP LBL[]",
+        "prefix": ["JMP", "jmplbl", "JMP LBL[]"],
         "body": [
             ":  JMP LBL[$1] ;",
             ":  ;"
@@ -121,7 +121,7 @@
     },
 
     "Jump Label With Label": {
-        "prefix": "JMP LBL[]",
+        "prefix": ["JMP", "jmplbl", "JMP LBL[]"],
         "body": [
             ":  JMP LBL[$1] ;",
             ":  ;",
@@ -137,11 +137,11 @@
             ":  WAIT $1(sec) ;",
             ":  ;"
         ],
-        "description": "Add Jump label"
+        "description": "Wait for a number of seconds"
     },
 
     "CALL": {
-        "prefix": "CALL ",
+        "prefix": "CALL",
         "body": [
             ":  CALL $0;",
             ":  ;"
