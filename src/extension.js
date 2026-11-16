@@ -16,6 +16,7 @@ const {
 const {
     BACKUP_FILES, findBackupFiles, readBackupDescriptions, compareDescriptions, combineDescriptions, serializeDescriptionsCsv
 } = require('./backupDescriptions');
+const { DEFAULT_TEMPLATE, DEFAULT_IGNORE_PATTERNS, mergeGitignore, offerCommit, initChoicesFor } = require('./gitIntegration');
 const {
     loadSnippetDefinitions,
     PROJECT_SNIPPETS_TEMPLATE,
@@ -24,6 +25,7 @@ const {
 
 const outputChannel = vscode.window.createOutputChannel("Robot File Sync");
 let extensionContext;
+let lsVerifier; // { checkFiles(uris) } from registerLsVerifier
 
 const EXTERNAL_SNIPPETS_STATE_KEY = 'robotFtp.externalSnippetsPath';
 const EXTERNAL_SNIPPETS_CONFIG_KEY = 'externalSnippetsFile';
@@ -42,6 +44,26 @@ function ensureManagedSnippetFile(context) {
     }
 
     return snippetFilePath;
+}
+
+/**
+ * Where folder pickers start: the right-clicked folder (or a right-clicked file's folder),
+ * then the folder of the file open in the editor, then the workspace root.
+ */
+function defaultFolderUri(resourceUri) {
+    const folderOf = uri => {
+        if (!uri || uri.scheme !== 'file') {
+            return undefined;
+        }
+        try {
+            return fs.statSync(uri.fsPath).isDirectory() ? uri : vscode.Uri.file(path.dirname(uri.fsPath));
+        } catch {
+            return undefined;
+        }
+    };
+    const editorUri = vscode.window.activeTextEditor?.document.uri;
+    const workspaceFolder = (editorUri && vscode.workspace.getWorkspaceFolder(editorUri)) || vscode.workspace.workspaceFolders?.[0];
+    return folderOf(resourceUri) || folderOf(editorUri) || workspaceFolder?.uri;
 }
 
 async function selectWorkspaceFolder(resourceUri) {
@@ -168,7 +190,7 @@ function createExternalSnippetCompletionProvider() {
 async function activate(context) {
     extensionContext = context;
     outputChannel.show();
-    registerLsVerifier(vscode, context, outputChannel);
+    lsVerifier = registerLsVerifier(vscode, context, outputChannel);
     context.subscriptions.push(vscode.commands.registerCommand(
         'extension.renameLsFile', createRenameLsCommand(vscode, outputChannel)
     ));
@@ -208,7 +230,11 @@ async function activate(context) {
         }
     });
     const selectExternalSnippets = vscode.commands.registerCommand('extension.selectExternalSnippets', async () => {
+        const currentExternal = vscode.workspace.getConfiguration('robotFtp').get(EXTERNAL_SNIPPETS_CONFIG_KEY, '');
         const selectedFiles = await vscode.window.showOpenDialog({
+            defaultUri: currentExternal && fs.existsSync(path.dirname(currentExternal))
+                ? vscode.Uri.file(path.dirname(currentExternal))
+                : defaultFolderUri(undefined),
             canSelectFiles: true,
             canSelectFolders: false,
             canSelectMany: false,
@@ -285,9 +311,10 @@ async function activate(context) {
         }
     }
 
-    const downloadAll_Function = vscode.commands.registerCommand("extension.downloadAllFiles", async () => {
+    const downloadAll_Function = vscode.commands.registerCommand("extension.downloadAllFiles", async (resourceUri) => {
         // Prompt the user to select a folder
         const destinationFolder = await vscode.window.showOpenDialog({
+            defaultUri: defaultFolderUri(resourceUri),
             canSelectFiles: false,
             canSelectFolders: true,
             canSelectMany: false,
@@ -303,9 +330,10 @@ async function activate(context) {
         //await f_downloadFromRobot(destinationUri, true, ".ls"); // Pass true for folder operations
         await f_downloadFromRobot(destinationUri, true, "*", "ALL"); // Pass true for folder operations
     });
-    const downloadLs_Function = vscode.commands.registerCommand("extension.downloadLsFiles", async () => {
+    const downloadLs_Function = vscode.commands.registerCommand("extension.downloadLsFiles", async (resourceUri) => {
         // Prompt the user to select a folder
         const destinationFolder = await vscode.window.showOpenDialog({
+            defaultUri: defaultFolderUri(resourceUri),
             canSelectFiles: false,
             canSelectFolders: true,
             canSelectMany: false,
@@ -321,8 +349,8 @@ async function activate(context) {
         await f_downloadFromRobot(destinationUri, true, ".ls", "LS"); // Pass true for folder operations
     });
     
-    const updateLsFilesFromRobot_Function = vscode.commands.registerCommand("extension.updateFilesFromRobotLsFiles", async () => {
-        await f_updateFilesFromRobot(".ls");
+    const updateLsFilesFromRobot_Function = vscode.commands.registerCommand("extension.updateFilesFromRobotLsFiles", async (resourceUri) => {
+        await f_updateFilesFromRobot(".ls", resourceUri);
     });
 
     const updateSelectedFileFromRobot_Function = vscode.commands.registerCommand("extension.updateSelectedFileFromRobot", async (uri) => {
@@ -543,6 +571,7 @@ async function createDescriptionsFromBackup(resourceUri) {
         folderPath = fs.statSync(resourceUri.fsPath).isDirectory() ? resourceUri.fsPath : path.dirname(resourceUri.fsPath);
     } else {
         const picked = await vscode.window.showOpenDialog({
+            defaultUri: defaultFolderUri(undefined),
             canSelectFiles: false, canSelectFolders: true, openLabel: 'Use this backup folder',
             title: 'Select a robot backup folder (from Get ALL Files from Robot)'
         });
@@ -709,6 +738,7 @@ async function importDescriptionsFromFolder(folderPath, workspaceRoot, ownerPath
     outputChannel.appendLine(`Wrote ${combined.size} descriptions to ${target.filePath} (${mode}).`);
     vscode.window.showInformationMessage(`Saved ${combined.size} descriptions to ${relative(target.filePath)}.`);
     await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.file(target.filePath)));
+    return target.filePath;
 }
 
 /** Opens (creating if needed) the shared or a robot's descriptions file. */
@@ -817,7 +847,7 @@ function trackTransferProgress(client, progress, totalBytes, actionLabel) {
  * 
  * @param {string} directoryPath - Directory to use for IP retrieval
  * @param {string} operationName - Name of operation for logging
- * @param {Function} callback - Async function that receives (client, ipAddress) and performs FTP operations
+ * @param {Function} callback - Async function that receives (client, ipAddress, robot) and performs FTP operations
  * @returns {Promise<void>}
  */
 async function withRobotConnection(directoryPath, operationName, callback) {
@@ -864,7 +894,7 @@ async function withRobotConnection(directoryPath, operationName, callback) {
         outputChannel.appendLine(`${operationName}: Starting operation...`);
         
         // Execute the provided callback
-        await callback(client, ipAddress);
+        await callback(client, ipAddress, robot);
         
         outputChannel.appendLine("BYE: Closing connection.");
     } catch (error) {
@@ -883,6 +913,96 @@ async function withRobotConnection(directoryPath, operationName, callback) {
 }
 
 /**
+ * Runs the LS verifier on every file before an upload. Returns true to go ahead with the upload.
+ * Errors ask "Send with Errors" or cancel; warnings alone do not stop the upload.
+ */
+async function checkLsFilesBeforeUpload(uris) {
+    if (!lsVerifier || uris.length === 0) {
+        return true;
+    }
+    let check;
+    try {
+        check = await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title: `Checking ${uris.length} LS file(s) before upload` },
+            () => lsVerifier.checkFiles(uris)
+        );
+    } catch (error) {
+        outputChannel.appendLine(`LS check before upload failed: ${error.message}`);
+        const send = 'Send Without Checking';
+        const choice = await vscode.window.showWarningMessage(
+            `The LS files could not be checked before upload: ${error.message}`,
+            { modal: true, detail: 'Fix the LS Verifier rules (MNAutomation → LS Checker → Edit LS Verifier Rules), or send without checking.' },
+            send
+        );
+        return choice === send;
+    }
+    if (check.skipped) {
+        outputChannel.appendLine('LS check before upload skipped: no verifier rules are enabled.');
+        return true;
+    }
+
+    const severityOf = issue => issue.severity || 'error';
+    const count = (issues, severity) => issues.filter(issue => severityOf(issue) === severity).length;
+    const isError = issue => severityOf(issue) === 'error';
+    const isCritical = issue => severityOf(issue) === 'critical';
+    const withCritical = check.results.filter(result => result.issues.some(isCritical));
+    const withErrors = check.results.filter(result => result.issues.some(isError));
+    const criticalCount = withCritical.reduce((sum, result) => sum + count(result.issues, 'critical'), 0);
+    const errorCount = withErrors.reduce((sum, result) => sum + count(result.issues, 'error'), 0);
+    const warningCount = check.results.reduce((sum, result) => sum + count(result.issues, 'warning'), 0);
+    for (const result of check.results.filter(item => item.issues.length > 0)) {
+        outputChannel.appendLine(`LS check: ${path.basename(result.uri.fsPath)}: ${count(result.issues, 'critical')} critical, ${count(result.issues, 'error')} error(s), ${count(result.issues, 'warning')} warning(s)`);
+    }
+    outputChannel.appendLine(`LS check before upload: ${uris.length} file(s), ${criticalCount} critical, ${errorCount} error(s), ${warningCount} warning(s).`);
+    const listNames = results => results.slice(0, 5).map(result => path.basename(result.uri.fsPath)).join(', ')
+        + (results.length > 5 ? `, and ${results.length - 5} more` : '');
+
+    // Critical: never sent. One critical finding blocks the whole upload.
+    if (withCritical.length > 0) {
+        outputChannel.appendLine('Upload blocked: critical LS errors.');
+        const showProblems = 'Show Problems';
+        const choice = await vscode.window.showErrorMessage(
+            `Upload blocked: ${withCritical.length} of ${uris.length} LS file(s) have critical errors (${criticalCount}): ${listNames(withCritical)}`,
+            {
+                modal: true,
+                detail: 'Critical errors make the robot reject the file, so nothing was sent. Fix them and send again. They are listed in the Problems panel as "Critical:".'
+            },
+            showProblems
+        );
+        if (choice === showProblems) {
+            await vscode.commands.executeCommand('workbench.actions.view.problems');
+        }
+        return false;
+    }
+
+    if (withErrors.length === 0) {
+        if (warningCount > 0) {
+            vscode.window.showInformationMessage(`LS check passed with ${warningCount} warning(s); uploading. See the Problems panel for details.`);
+        }
+        return true;
+    }
+
+    const send = 'Send with Errors';
+    const showProblems = 'Show Problems';
+    const choice = await vscode.window.showWarningMessage(
+        `${withErrors.length} of ${uris.length} LS file(s) have format errors (${errorCount} error(s)): ${listNames(withErrors)}`,
+        {
+            modal: true,
+            detail: 'Files with errors may fail to load on the robot. Cancel and fix them first, or send them anyway. The errors are listed in the Problems panel.'
+        },
+        send, showProblems
+    );
+    if (choice === send) {
+        outputChannel.appendLine(`Sending ${withErrors.length} file(s) with LS errors at the user's request.`);
+        return true;
+    }
+    if (choice === showProblems) {
+        await vscode.commands.executeCommand('workbench.actions.view.problems');
+    }
+    return false;
+}
+
+/**
  * Upload a file or folder to the robot.
  */
 async function f_uploadToRobot(uri, isFolder) {
@@ -893,6 +1013,22 @@ async function f_uploadToRobot(uri, isFolder) {
 
     const directoryPath = isFolder ? uri.fsPath : path.dirname(uri.fsPath);
     const selectedPath = uri.fsPath;
+    let transfer;
+
+    // Check every LS file before connecting; stop here if the user cancels.
+    let lsUris;
+    if (isFolder) {
+        const entries = await vscode.workspace.fs.readDirectory(uri);
+        lsUris = entries
+            .filter(([name, type]) => type === vscode.FileType.File && name.toLowerCase().endsWith('.ls'))
+            .map(([name]) => vscode.Uri.file(path.join(selectedPath, name)));
+    } else {
+        lsUris = /\.ls$/i.test(selectedPath) ? [uri] : [];
+    }
+    if (!await checkLsFilesBeforeUpload(lsUris)) {
+        outputChannel.appendLine('Upload cancelled after the LS check.');
+        return;
+    }
 
     await vscode.window.withProgress(
         {
@@ -901,7 +1037,8 @@ async function f_uploadToRobot(uri, isFolder) {
             cancellable: false
         },
         async (progress) => {
-            await withRobotConnection(directoryPath, 'Upload', async (client, ipAddress) => {
+            await withRobotConnection(directoryPath, 'Upload', async (client, ipAddress, robot) => {
+                const sentFiles = [];
                 // Upload either a file or a folder
                 if (isFolder) {
                     const files = await vscode.workspace.fs.readDirectory(vscode.Uri.file(selectedPath));
@@ -922,6 +1059,7 @@ async function f_uploadToRobot(uri, isFolder) {
                             const localPath = path.join(selectedPath, fileName);
                             outputChannel.appendLine(`Uploading file: ${fileName}`);
                             await client.uploadFrom(localPath, fileName);
+                            sentFiles.push(localPath);
                             uploadedCount++;
                             outputChannel.appendLine(`Uploaded ${uploadedCount} of ${totalFiles}: ${fileName}`);
                         }
@@ -937,6 +1075,7 @@ async function f_uploadToRobot(uri, isFolder) {
                     try {
                         const completeProgress = trackTransferProgress(client, progress, totalBytes, 'Uploading');
                         await client.uploadFrom(selectedPath, path.basename(selectedPath));
+                        sentFiles.push(selectedPath);
                         completeProgress('Upload complete');
                     } finally {
                         client.trackProgress();
@@ -944,9 +1083,14 @@ async function f_uploadToRobot(uri, isFolder) {
                 }
                 
                 vscode.window.showInformationMessage(`File(s) uploaded successfully to ${ipAddress}`);
+                transfer = { kind: 'upload', operation: 'Upload', files: sentFiles, folder: directoryPath, robotName: robot.name, ip: ipAddress };
             });
         }
     );
+
+    if (transfer) {
+        await commitTransfer(transfer);
+    }
 }
 
 async function f_downloadFromRobot(destinationUri, isFolder, fileType, saveType) {
@@ -964,9 +1108,12 @@ async function f_downloadFromRobot(destinationUri, isFolder, fileType, saveType)
         counter++;
     }
 
-    const dateFolderPath = path.join(destinationPath, folderName);
+    // Layout "fixed": one folder per download type (ALL or LS), overwritten each time so git shows the changes.
+    const layout = vscode.workspace.getConfiguration('robotFtp', destinationUri).get('downloadLayout', 'dated');
+    const dateFolderPath = layout === 'fixed' ? path.join(destinationPath, saveType) : path.join(destinationPath, folderName);
     fs.mkdirSync(dateFolderPath, { recursive: true });
     let missingDescriptions;
+    let transfer;
 
     await vscode.window.withProgress(
         {
@@ -975,7 +1122,8 @@ async function f_downloadFromRobot(destinationUri, isFolder, fileType, saveType)
             cancellable: false
         },
         async (progress) => {
-            await withRobotConnection(directoryPath, 'Download', async (client, ipAddress) => {
+            await withRobotConnection(directoryPath, 'Download', async (client, ipAddress, robot) => {
+                const receivedFiles = [];
                 const fileList = await client.list();
 
                 // Count matching files for progress tracking
@@ -1000,6 +1148,7 @@ async function f_downloadFromRobot(destinationUri, isFolder, fileType, saveType)
                         const localPath = path.join(dateFolderPath, file.name);
                         outputChannel.appendLine(`Downloading file: ${file.name}`);
                         await client.downloadTo(localPath, file.name);
+                        receivedFiles.push(localPath);
                         downloadedCount++;
                         outputChannel.appendLine(`Downloaded ${downloadedCount} of ${totalFiles}: ${file.name}`);
                     }
@@ -1010,6 +1159,7 @@ async function f_downloadFromRobot(destinationUri, isFolder, fileType, saveType)
                 }
                 
                 vscode.window.showInformationMessage(`${fileType === "*" ? "All" : fileType} files downloaded successfully to ${dateFolderPath}`);
+                transfer = { kind: 'download', operation: fileType === '*' ? 'Download all files' : 'Download LS files', files: receivedFiles, folder: dateFolderPath, robotName: robot.name, ip: ipAddress };
 
                 // If this robot has no descriptions yet, get its comment files while still connected.
                 missingDescriptions = findRobotMissingDescriptions(destinationPath, ipAddress);
@@ -1027,7 +1177,13 @@ async function f_downloadFromRobot(destinationUri, isFolder, fileType, saveType)
     );
 
     if (missingDescriptions) {
-        await offerToCreateDescriptions(missingDescriptions, destinationPath);
+        const descriptionsFile = await offerToCreateDescriptions(missingDescriptions, destinationPath);
+        if (descriptionsFile && transfer) {
+            transfer.files.push(descriptionsFile);
+        }
+    }
+    if (transfer) {
+        await commitTransfer(transfer);
     }
 }
 
@@ -1088,12 +1244,13 @@ async function offerToCreateDescriptions(missing, destinationPath) {
             create, 'Not now', dontAsk
         );
         if (choice === create) {
-            await importDescriptionsFromFolder(sourceFolder, workspaceRoot, destinationPath, `robot ${robot.name} (${ipAddress})`, filePath);
+            return await importDescriptionsFromFolder(sourceFolder, workspaceRoot, destinationPath, `robot ${robot.name} (${ipAddress})`, filePath);
         } else if (choice === dontAsk) {
             const skipped = extensionContext.workspaceState.get(SKIP_DESCRIPTIONS_PROMPT_KEY, []);
             await extensionContext.workspaceState.update(SKIP_DESCRIPTIONS_PROMPT_KEY, [...skipped, robot.name.toLowerCase()]);
             outputChannel.appendLine(`Will not ask again to create descriptions for ${robot.name}. Use MNAutomation → Descriptions → Get Descriptions from Robot to create them later.`);
         }
+        return undefined;
     } finally {
         if (isTemp) {
             fs.rmSync(sourceFolder, { recursive: true, force: true });
@@ -1101,8 +1258,9 @@ async function offerToCreateDescriptions(missing, destinationPath) {
     }
 }
 
-async function f_updateFilesFromRobot(fileType) {
+async function f_updateFilesFromRobot(fileType, resourceUri) {
     const selectedFolders = await vscode.window.showOpenDialog({
+        defaultUri: defaultFolderUri(resourceUri),
         canSelectFolders: true,
         canSelectFiles: false,
         canSelectMany: false,
@@ -1115,6 +1273,7 @@ async function f_updateFilesFromRobot(fileType) {
     }
 
     const destinationPath = selectedFolders[0].fsPath;
+    let transfer;
 
     await vscode.window.withProgress(
         {
@@ -1123,7 +1282,8 @@ async function f_updateFilesFromRobot(fileType) {
             cancellable: false
         },
         async (progress) => {
-            await withRobotConnection(destinationPath, 'Update', async (client) => {
+            await withRobotConnection(destinationPath, 'Update', async (client, ipAddress, robot) => {
+                const receivedFiles = [];
                 const fileList = await client.list();
 
                 // Get the list of files already downloaded (existing in the local folder)
@@ -1160,6 +1320,7 @@ async function f_updateFilesFromRobot(fileType) {
                             const localPath = path.join(destinationPath, file.name);
                             outputChannel.appendLine(`Updating file: ${file.name}`);
                             await client.downloadTo(localPath, file.name);
+                            receivedFiles.push(localPath);
                             updatedCount++;
                             outputChannel.appendLine(`Updated ${updatedCount} of ${totalFiles}: ${file.name}`);
                         }
@@ -1171,15 +1332,21 @@ async function f_updateFilesFromRobot(fileType) {
                 }
 
                 vscode.window.showInformationMessage(`${fileType === "*" ? "All" : fileType} files updated successfully in ${destinationPath}`);
+                transfer = { kind: 'download', operation: 'Update LS files', files: receivedFiles, folder: destinationPath, robotName: robot.name, ip: ipAddress };
             });
         }
     );
+
+    if (transfer) {
+        await commitTransfer(transfer);
+    }
 }
 
 async function f_updateSelectedFileFromRobot(uri, fileType) {
     const directoryPath = path.dirname(uri.fsPath);
 
     const selectedFolder = await vscode.window.showOpenDialog({
+        defaultUri: defaultFolderUri(uri),
         canSelectFolders: true,
         canSelectFiles: false,
         canSelectMany: false,
@@ -1194,6 +1361,7 @@ async function f_updateSelectedFileFromRobot(uri, fileType) {
     const destinationPath = selectedFolder[0].fsPath;
     const selectedPath = uri.fsPath;
     const selectedFile = path.basename(selectedPath);
+    let transfer;
 
     await vscode.window.withProgress(
         {
@@ -1202,7 +1370,7 @@ async function f_updateSelectedFileFromRobot(uri, fileType) {
             cancellable: false
         },
         async (progress) => {
-            await withRobotConnection(directoryPath, 'UpdateSelected', async (client) => {
+            await withRobotConnection(directoryPath, 'UpdateSelected', async (client, ipAddress, robot) => {
                 const fileList = await client.list();
 
                 const filteredFiles = fileList.filter(file => 
@@ -1232,9 +1400,171 @@ async function f_updateSelectedFileFromRobot(uri, fileType) {
                 }
 
                 vscode.window.showInformationMessage(`File "${selectedFile}" downloaded successfully to ${destinationPath}`);
+                transfer = { kind: 'download', operation: `Update ${selectedFile}`, files: [localPath], folder: destinationPath, robotName: robot.name, ip: ipAddress };
             });
         }
     );
+
+    if (transfer) {
+        await commitTransfer(transfer);
+    }
+}
+
+// ---- Git commits after robot transfers ------------------------------------
+
+let gitUnavailableWarned = false;
+
+/** VS Code's built-in Git extension API, or undefined (warns once per session). */
+async function getGitApi() {
+    try {
+        const extension = vscode.extensions.getExtension('vscode.git');
+        if (extension) {
+            const exports = extension.isActive ? extension.exports : await extension.activate();
+            if (exports?.enabled) {
+                const api = exports.getAPI(1);
+                if (api.state !== 'initialized') {
+                    await new Promise(resolve => {
+                        const timer = setTimeout(resolve, 5000);
+                        const listener = api.onDidChangeState(state => {
+                            if (state === 'initialized') {
+                                clearTimeout(timer);
+                                listener.dispose();
+                                resolve();
+                            }
+                        });
+                    });
+                }
+                return api;
+            }
+        }
+    } catch (error) {
+        outputChannel.appendLine(`Git: could not load the Git extension: ${error.message}`);
+    }
+    if (!gitUnavailableWarned) {
+        gitUnavailableWarned = true;
+        vscode.window.showWarningMessage('Robot FTP: VS Code\'s Git extension is not available, so robot transfers are not committed. Enable the built-in Git extension (git.enabled) to use this.');
+    }
+    return undefined;
+}
+
+/** Nearest folder at or above folderPath that contains .git. */
+function findGitRoot(folderPath) {
+    let current = path.resolve(folderPath);
+    for (;;) {
+        if (fs.existsSync(path.join(current, '.git'))) {
+            return current;
+        }
+        const parent = path.dirname(current);
+        if (parent === current) {
+            return undefined;
+        }
+        current = parent;
+    }
+}
+
+function adaptRepository(repository) {
+    const paths = changes => (changes || []).map(change => change.uri.fsPath);
+    return {
+        root: repository.rootUri.fsPath,
+        branch: () => repository.state.HEAD?.name,
+        hasRemote: () => repository.state.remotes.length > 0,
+        refresh: () => repository.status(),
+        changedPaths: () => [...paths(repository.state.workingTreeChanges), ...paths(repository.state.untrackedChanges)],
+        stagedPaths: () => paths(repository.state.indexChanges),
+        add: files => repository.add(files),
+        unstage: files => repository.revert(files),
+        commit: message => repository.commit(message),
+        push: () => repository.push(),
+        showInSourceControl: async message => {
+            repository.inputBox.value = message;
+            await vscode.commands.executeCommand('workbench.view.scm');
+        }
+    };
+}
+
+function gitAdapter(api) {
+    return {
+        findRepo: async folder => {
+            const root = findGitRoot(folder);
+            if (!root) {
+                return null;
+            }
+            const rootUri = vscode.Uri.file(root);
+            const repository = api.getRepository(rootUri) || await api.openRepository(rootUri);
+            return repository ? adaptRepository(repository) : null;
+        },
+        initChoices: folder => initChoicesFor(folder, getWorkspaceRoot(folder)),
+        init: async folder => {
+            const repository = await api.init(vscode.Uri.file(folder));
+            outputChannel.appendLine(`Git: initialized a repository in ${folder}`);
+            if (!repository) {
+                return null;
+            }
+            const repo = adaptRepository(repository);
+            const gitignore = writeGitignore(folder);
+            repo.createdFiles = gitignore ? [gitignore] : [];
+            return repo;
+        }
+    };
+}
+
+/** Adds robotFtp.git.ignorePatterns to <folder>/.gitignore. Returns its path when something was written. */
+function writeGitignore(folder) {
+    const patterns = vscode.workspace.getConfiguration('robotFtp.git', vscode.Uri.file(folder)).get('ignorePatterns', DEFAULT_IGNORE_PATTERNS);
+    const filePath = path.join(folder, '.gitignore');
+    try {
+        const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
+        const { text, added } = mergeGitignore(existing, patterns);
+        if (added.length === 0) {
+            return undefined;
+        }
+        fs.writeFileSync(filePath, text, 'utf8');
+        outputChannel.appendLine(`Git: added ${added.join(', ')} to ${filePath}`);
+        return filePath;
+    } catch (error) {
+        outputChannel.appendLine(`Warning: Could not write ${filePath}: ${error.message}`);
+        return undefined;
+    }
+}
+
+const gitUi = {
+    input: options => vscode.window.showInputBox({ ...options, ignoreFocusOut: true }),
+    choose: (message, buttons, options = {}) => vscode.window.showInformationMessage(message, { modal: !!options.modal }, ...buttons),
+    pick: (items, options) => vscode.window.showQuickPick(items, { ...options, ignoreFocusOut: true }),
+    info: message => vscode.window.showInformationMessage(message),
+    warn: message => vscode.window.showWarningMessage(message)
+};
+
+function getGitSettings(folder) {
+    const config = vscode.workspace.getConfiguration('robotFtp.git', vscode.Uri.file(folder));
+    return {
+        onDownload: config.get('onDownload', 'prompt'),
+        onUpload: config.get('onUpload', 'prompt'),
+        commitMode: config.get('commitMode', 'auto'),
+        messageTemplate: config.get('messageTemplate', DEFAULT_TEMPLATE),
+        push: config.get('push', 'never'),
+        offerInit: config.get('offerInit', true)
+    };
+}
+
+/** Offers a commit for a finished transfer. Never throws. */
+async function commitTransfer(result) {
+    try {
+        const settings = getGitSettings(result.folder);
+        const mode = result.kind === 'upload' ? settings.onUpload : settings.onDownload;
+        if (mode !== 'prompt' || result.files.length === 0) {
+            return;
+        }
+        const api = await getGitApi();
+        if (!api) {
+            return;
+        }
+        const status = await offerCommit({ git: gitAdapter(api), ui: gitUi, settings, result });
+        outputChannel.appendLine(`Git after ${result.operation}: ${status}`);
+    } catch (error) {
+        outputChannel.appendLine(`Git: ${error.message}`);
+        vscode.window.showErrorMessage(`Git commit failed: ${error.message}`);
+    }
 }
 
 const RECENT_IPS_STATE_KEY = 'robotFtp.recentIps';

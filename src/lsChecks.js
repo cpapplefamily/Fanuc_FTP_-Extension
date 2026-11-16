@@ -1,6 +1,6 @@
 const { validateProgramName } = require('./renameLs');
 
-const checks = ['sections', 'programName', 'delimiters', 'labels', 'positions', 'motion', 'calls'];
+const checks = ['sections', 'programName', 'delimiters', 'extraColon', 'labels', 'jumpTargets', 'positions', 'motion', 'calls'];
 
 // Robot-exported --eg: remarks wrap at about 80 characters. Continuation lines start
 // with a bare ':' (no line number), and only the last line ends with ';'.
@@ -36,7 +36,8 @@ function scanCode(text) {
         }
         if (description && c !== ']') { code += ' '; continue; }
         if (c === '"' || c === "'") { quote = c; code += ' '; continue; }
-        if (c === '!') break;
+        // "!" starts a remark only at the start of the statement ("!Open gripper ;"); elsewhere it is NOT ("IF (!DI[1])").
+        if (c === '!' && !code.trim()) break;
         if (c === ':' && stack[stack.length - 1] === '[') {
             description = true;
             code += ' ';
@@ -80,6 +81,9 @@ function runChecks(text, rules, options = {}) {
         if (remark.remark) return; // Remark text is free-form, not code.
         const colon = line.indexOf(':');
         const body = colon < 0 ? line : line.slice(colon + 1);
+        // "1: :!text ;" — a second ':' right after the instruction colon; the robot rejects the file.
+        // Typical cause: a snippet (whose lines start with ':') inserted after an existing "1: ".
+        if (colon >= 0 && /^\s*:/.test(body)) report('extraColon', index, 'Only one ":" may follow the line number. Remove the extra ":".');
         const scanned = scanCode(body);
         if (scanned.problem) report('delimiters', index, scanned.problem);
         // LS exports can put the motion letter before the instruction colon.
@@ -132,7 +136,7 @@ function runChecks(text, rules, options = {}) {
     for (let i = 0; i < instructions.length; i++) {
         const { code, line } = instructions[i];
         for (const jump of code.matchAll(/\bJMP\s+LBL\[\s*(\d+)\s*\]/gi)) {
-            if (!labels.has(Number(jump[1]))) report('labels', line, `JMP LBL[${jump[1]}] has no matching label.`);
+            if (!labels.has(Number(jump[1]))) report('jumpTargets', line, `JMP LBL[${jump[1]}] has no matching label.`);
         }
         for (const position of code.matchAll(/\bP\[\s*(\d+)\s*(?:,\s*\d+\s*)?\]/gi)) {
             if (!positions.has(Number(position[1]))) report('positions', line, `P[${position[1]}] is not defined in /POS.`);

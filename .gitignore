@@ -1,2 +1,5 @@
 node_modules
 .vscode-test/
+
+# Built extension packages (create with vsce package)
+*.vsix

@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 4,
   "rules": [
     {
       "id": "mn-colon",
@@ -37,8 +37,15 @@
       "id": "delimiters",
       "enabled": true,
       "check": "delimiters",
-      "severity": "error",
+      "severity": "critical",
       "message": "LS delimiters:"
+    },
+    {
+      "id": "extraColon",
+      "enabled": true,
+      "check": "extraColon",
+      "severity": "critical",
+      "message": "LS extra colon:"
     },
     {
       "id": "labels",
@@ -46,6 +53,13 @@
       "check": "labels",
       "severity": "error",
       "message": "LS labels:"
+    },
+    {
+      "id": "jumpTargets",
+      "enabled": true,
+      "check": "jumpTargets",
+      "severity": "error",
+      "message": "LS jump targets:"
     },
     {
       "id": "positions",

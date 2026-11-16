@@ -6,6 +6,47 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.9.8-dev] - 2026-11-16
+
+- New **MNAutomation → LS Checker** submenu with **Verify LS File**, **Edit LS Verifier Rules**, and the new **Reset LS Verifier Rules to Defaults** (asks first and saves a backup of your current rules).
+- When an update changes a built-in default of an existing rule, the next verification or upload offers the change for rules that still have the old default (rules you changed are left alone). First use: `extraColon` and `delimiters` error → critical.
+
+## [0.9.7-dev] - 2026-11-16
+
+- LS verifier: new severity level `critical`. A critical finding blocks sending to the robot (no "Send with Errors"); with Send Folder, one critical file blocks the whole upload. In the Problems panel critical findings are errors labeled "Critical:". `extraColon` and `delimiters` are critical by default; existing rules files keep their own severities. README: new "Severity levels" section.
+
+## [0.9.6-dev] - 2026-11-16
+
+- LS verifier: new `extraColon` rule reports a second `:` after the line number (`1: :!text ;`), which makes the robot reject the file. It usually comes from inserting a snippet on a numbered line. Default severity `error`. Rules files move to version 4; existing files get the new rule automatically, in template order. README: added to "Common LS errors".
+
+## [0.9.5-dev] - 2026-11-16
+
+- LS verifier: "JMP LBL[n] has no matching label" is now its own rule, `jumpTargets`, so its severity can be changed (or the check turned off) without affecting duplicate-label checks. Rules files move to version 3; existing files are upgraded automatically and the new rule copies your `labels` setting. README: new "Common LS errors" section with the steps.
+- Check LS files before upload: **Send This LS File** and **Send Folder** run the LS verifier on every LS file first. If any have errors, a dialog warns that they may fail to load on the robot and offers **Send with Errors**, **Show Problems**, or cancel. Warnings do not stop the upload.
+- Fix: the LS verifier reported "Unclosed bracket or parenthesis" when `!` was used as NOT, e.g. `WAIT (!DO[110])` or `IF (!DI[1]) THEN`. Only a statement that starts with `!` is a remark.
+- Fix: the "MN line must end with a semicolon" rule flagged instructions that continue on the next line, such as circular moves (`20:  C P[5]` followed by `    :  P[6] ... ;`), also when commented out with `//`. A line followed by a `:` continuation line no longer needs its own `;`; the last line still does.
+
+## [0.9.4-dev] - 2026-11-16
+
+- The "not in a git repository" question is now a pick list with short names and the full path on a second line, instead of notification buttons that cut the paths off.
+
+## [0.9.3-dev] - 2026-11-16
+
+- When the extension has just created the repository, ask whether the first commit includes all files already in the folder (earlier downloads, `.vscode`) or only this transfer. Before, only the transfer was committed and everything else stayed untracked.
+
+## [0.9.2-dev] - 2026-11-16
+
+- When the extension creates a git repository, it also writes `.gitignore` from the new setting `robotFtp.git.ignorePatterns` (default `*.Sem`, `*.Wrk`) and includes it in the first commit. An existing `.gitignore` only gets the missing patterns.
+
+## [0.9.1-dev] - 2026-11-16
+
+- Folder pickers (Get ALL / Get All LS / Get Update LS Folder / Get Update For This LS File / Create Descriptions from Backup) now open at the right-clicked folder, then the open file's folder, then the workspace root, instead of the last folder any dialog used. Load External Fanuc Snippets opens at the current external file's folder.
+
+## [0.9.0-dev] - 2026-11-16
+
+- Git integration: after a successful download, update, or upload, enter a commit message to commit only the transferred files (VS Code's built-in Git). Offers `git init` when the folder is not a repository; never commits after an error. Settings: `robotFtp.git.onDownload`, `onUpload`, `commitMode`, `messageTemplate`, `push`, `offerInit`.
+- New setting `robotFtp.downloadLayout`: `dated` (default) or `fixed` (download into `ALL` / `LS` and overwrite, so git shows what changed).
+
 ## [0.8.8-dev] - 2026-11-16
 
 - Fix snippet triggers that contained spaces, which VS Code cannot match: **Set Frames** now triggers on `frames` or `setframes`, **To DO** on `todo`, **CALL** on `CALL` (no trailing space), **Label** on `LBL`, both **Jump Label** snippets on `JMP` or `jmplbl`, and **Multi Line Text** on `eg`. The old triggers still work when picked from the list.

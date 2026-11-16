@@ -3,7 +3,7 @@
   "displayName": "Robot FTP",
   "description": "VSCODE extension to FTP *.ls file to Fanuc Robot",
   "publisher": "CoreyApplegate",
-  "version": "0.8.8-dev",
+  "version": "0.9.8-dev",
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -70,6 +70,10 @@
       {
         "command": "extension.openLsVerifierRules",
         "title": "Edit LS Verifier Rules"
+      },
+      {
+        "command": "extension.resetLsVerifierRules",
+        "title": "Reset LS Verifier Rules to Defaults"
       },
       {
         "command": "extension.renameLsFile",
@@ -178,6 +182,10 @@
       {
         "id": "MNAutomation.descriptions",
         "label": "Descriptions"
+      },
+      {
+        "id": "MNAutomation.lsChecker",
+        "label": "LS Checker"
       }
     ],
     "menus": {
@@ -195,12 +203,7 @@
       ],
       "MNAutomation.submenu": [
         {
-          "command": "extension.verifyLsFile",
-          "when": "!explorerResourceIsFolder && resourceExtname =~ /\\.ls$/i",
-          "group": "fanucHelpers"
-        },
-        {
-          "command": "extension.openLsVerifierRules",
+          "submenu": "MNAutomation.lsChecker",
           "group": "fanucHelpers"
         },
         {
@@ -276,6 +279,21 @@
           "command": "extension.editDescriptions",
           "group": "2_edit@1"
         }
+      ],
+      "MNAutomation.lsChecker": [
+        {
+          "command": "extension.verifyLsFile",
+          "when": "!explorerResourceIsFolder && resourceExtname =~ /\\.ls$/i",
+          "group": "1_check@1"
+        },
+        {
+          "command": "extension.openLsVerifierRules",
+          "group": "2_rules@1"
+        },
+        {
+          "command": "extension.resetLsVerifierRules",
+          "group": "2_rules@2"
+        }
       ]
     },
     "configuration": {
@@ -301,6 +319,89 @@
           "default": "",
           "scope": "window",
           "description": "Absolute path to an external Fanuc .code-snippets or JSON file. This augments the built-in snippets."
+        },
+        "robotFtp.downloadLayout": {
+          "type": "string",
+          "enum": [
+            "dated",
+            "fixed"
+          ],
+          "enumDescriptions": [
+            "Each download goes into a new dated folder, e.g. 2026-11-16-ALL_01 (default).",
+            "Downloads go into ALL or LS inside the chosen folder and overwrite it, so git shows what changed on the robot. Files deleted on the robot are not deleted locally."
+          ],
+          "default": "dated",
+          "scope": "resource",
+          "description": "Where Get ALL Files and Get All LS Files save the files."
+        },
+        "robotFtp.git.onDownload": {
+          "type": "string",
+          "enum": [
+            "prompt",
+            "off"
+          ],
+          "default": "prompt",
+          "scope": "resource",
+          "description": "After downloading or updating files from the robot, ask for a commit message and commit the downloaded files."
+        },
+        "robotFtp.git.onUpload": {
+          "type": "string",
+          "enum": [
+            "prompt",
+            "off"
+          ],
+          "default": "prompt",
+          "scope": "resource",
+          "description": "After uploading files to the robot, commit any uncommitted edits in the uploaded files."
+        },
+        "robotFtp.git.commitMode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "confirm"
+          ],
+          "enumDescriptions": [
+            "Commit as soon as the message is entered.",
+            "After the message, ask \"Commit N files to <branch>?\" with Commit / Open Source Control."
+          ],
+          "default": "auto",
+          "scope": "resource",
+          "description": "What happens after you enter the commit message."
+        },
+        "robotFtp.git.messageTemplate": {
+          "type": "string",
+          "default": "${operation} ${robot} ${date}",
+          "scope": "resource",
+          "markdownDescription": "Suggested commit message. Variables: `${operation}` (e.g. Download LS files, Upload), `${robot}` (name and IP), `${name}`, `${ip}`, `${date}`, `${count}` (files), `${folder}` (relative to the repository)."
+        },
+        "robotFtp.git.push": {
+          "type": "string",
+          "enum": [
+            "never",
+            "ask",
+            "always"
+          ],
+          "default": "never",
+          "scope": "resource",
+          "description": "Push after committing. Repositories without a remote are never pushed."
+        },
+        "robotFtp.git.offerInit": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "When the files are not in a git repository, offer to create one."
+        },
+        "robotFtp.git.ignorePatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "*.Sem",
+            "*.Wrk"
+          ],
+          "scope": "resource",
+          "markdownDescription": "Patterns written to `.gitignore` when the extension creates a git repository (for example PLC files `*.Sem`, `*.Wrk`). Uses [.gitignore pattern syntax](https://git-scm.com/docs/gitignore). If a `.gitignore` already exists in that folder, only missing patterns are added."
         }
       }
     }

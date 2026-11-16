@@ -1,5 +1,5 @@
 const assert = require('assert');
-const { parseRules, verifyLs, upgradeRules } = require('../src/lsVerifier');
+const { parseRules, verifyLs, upgradeRules, pendingDefaultChanges, applyDefaultChanges, DEFAULTS_REVISION } = require('../src/lsVerifier');
 const defaults = require('../src/lsVerifierRules.json');
 const all = parseRules(JSON.stringify(defaults));
 const advanced = all.filter(rule => !rule.section);
@@ -47,9 +47,87 @@ suite('LS advanced checks', () => {
             assert.ok(check(program(line)).some(issue => issue.code === 'delimiters'));
         }
     });
+    test('"!" is a remark only at the start of a statement; elsewhere it is NOT', () => {
+        // Lines from robot-generated files that were wrongly reported as unclosed brackets.
+        assert.deepStrictEqual(check(program('  18:  WAIT (!DO[110:OFF:Pallet IN Pos])    ;\n   2:  IF (!DI[1: * :System Air Pressure]) THEN ;\n   3:  ENDIF ;')), []);
+        assert.ok(check(program('1: IF (!DI[1] ;')).some(issue => issue.code === 'delimiters'), 'a real unclosed parenthesis after ! is still found');
+        assert.deepStrictEqual(check(program('  4:  !Open ( the [ gripper ;')), []);
+    });
     test('finds duplicate labels and missing static jump targets, excluding indirect jumps', () => {
         const issues = check(program('1: LBL[1] ;\n2: LBL[01] ;\n3: JMP LBL[9] ;\n4: JMP LBL[R[1]] ;'));
-        assert.strictEqual(issues.filter(issue => issue.code === 'labels').length, 2);
+        assert.deepStrictEqual(issues.map(issue => [issue.code, issue.message]), [
+            ['labels', 'LS labels: Duplicate LBL[1].'],
+            ['jumpTargets', 'LS jump targets: JMP LBL[9] has no matching label.']
+        ]);
+    });
+    test('extraColon: a second ":" after the line number is an error', () => {
+        // From p01_place_conveyor.ls: the Header snippet inserted after an existing "1: ".
+        const issues = check(program('   1: :!------------------------ ;\n   :  !-----MAIN PROGRAM----- ;'));
+        assert.deepStrictEqual(issues.map(issue => [issue.code, issue.line, issue.severity]), [['extraColon', 5, 'critical']]);
+        assert.match(issues[0].message, /^LS extra colon: Only one ":" may follow the line number/);
+        for (const line of ['  2::  CALL MAIN ;', '  3:   : CALL MAIN ;']) {
+            assert.deepStrictEqual(check(program(line)).map(issue => issue.code), ['extraColon'], line);
+        }
+        // Not flagged: continuation lines, unnumbered statements, colons inside the statement, --eg: remarks.
+        const fine = [
+            '  20:  C P[5]    ',
+            '    :  P[6] 100mm/sec CNT100    ;',
+            '   :  !-----MAIN PROGRAM----- ;',
+            '  4:  LBL[1:Start] ;',
+            '  5:  JMP LBL[1] ;',
+            '  6:  IF DI[1: * :Ready]=ON,CALL MAIN ;',
+            '  7:  --eg: Note: two colons : here ;'
+        ].join('\n');
+        assert.deepStrictEqual(check(program(fine, 'P[5]{\n};\nP[6]{\n};'), { localPrograms: ['MAIN'] }), []);
+    });
+    test('critical severity: accepted in rules, reported on issues, default for extraColon and delimiters', () => {
+        const byId = Object.fromEntries(defaults.rules.map(rule => [rule.id, rule.severity]));
+        assert.strictEqual(byId.extraColon, 'critical');
+        assert.strictEqual(byId.delimiters, 'critical');
+        assert.strictEqual(byId.jumpTargets, 'error');
+        const issues = check(program('   1: :!---- ;\n   2:  R[1=2 ;\n   3:  JMP LBL[9] ;'));
+        assert.deepStrictEqual(issues.map(issue => [issue.code, issue.severity]), [
+            ['extraColon', 'critical'], ['delimiters', 'critical'], ['jumpTargets', 'error']
+        ]);
+        const literal = { version: 4, rules: [{ ...defaults.rules[1], severity: 'critical' }] };
+        assert.strictEqual(verifyLs('/MN\n  1: CALL MAIN\n/END', parseRules(JSON.stringify(literal)))[0].severity, 'critical');
+        assert.throws(() => parseRules(JSON.stringify({ version: 4, rules: [{ ...defaults.rules[1], severity: 'fatal' }] })));
+    });
+    test('changed defaults are offered only for rules that still have the old default, once per revision', () => {
+        const withSeverity = (overrides) => JSON.stringify({ version: defaults.version, rules: defaults.rules.map(rule => rule.id in overrides ? { ...rule, severity: overrides[rule.id] } : rule) });
+        // A 0.9.6-era file: both still "error" (the old default) → both offered.
+        const old = withSeverity({ extraColon: 'error', delimiters: 'error' });
+        assert.deepStrictEqual(pendingDefaultChanges(old).map(change => [change.id, change.from, change.to]), [
+            ['delimiters', 'error', 'critical'], ['extraColon', 'error', 'critical']
+        ]);
+        // A rule the user set themselves is never offered; an already-current file has nothing to offer.
+        assert.deepStrictEqual(pendingDefaultChanges(withSeverity({ extraColon: 'warning', delimiters: 'error' })).map(change => change.id), ['delimiters']);
+        assert.deepStrictEqual(pendingDefaultChanges(JSON.stringify(defaults)), []);
+        // Already asked for this revision → nothing.
+        assert.deepStrictEqual(pendingDefaultChanges(old, DEFAULTS_REVISION), []);
+        // Applying changes only the chosen rules and keeps everything else.
+        const custom = JSON.parse(withSeverity({ extraColon: 'error', delimiters: 'error', jumpTargets: 'warning' }));
+        custom.rules.find(rule => rule.id === 'labels').message = 'My labels:';
+        const applied = JSON.parse(applyDefaultChanges(JSON.stringify(custom), pendingDefaultChanges(JSON.stringify(custom)).filter(change => change.id === 'extraColon')));
+        const byId = Object.fromEntries(applied.rules.map(rule => [rule.id, rule]));
+        assert.strictEqual(byId.extraColon.severity, 'critical');
+        assert.strictEqual(byId.delimiters.severity, 'error');
+        assert.strictEqual(byId.jumpTargets.severity, 'warning');
+        assert.strictEqual(byId.labels.message, 'My labels:');
+    });
+    test('version 3 rules gain extraColon after delimiters', () => {
+        const v3 = { version: 3, rules: defaults.rules.filter(rule => rule.check !== 'extraColon') };
+        const upgraded = JSON.parse(upgradeRules(JSON.stringify(v3)));
+        assert.deepStrictEqual(upgraded.rules.map(rule => rule.check), defaults.rules.map(rule => rule.check));
+        assert.strictEqual(upgraded.version, defaults.version);
+    });
+    test('jumpTargets has its own severity and on/off setting, separate from labels', () => {
+        const text = program('1: LBL[1] ;\n2: LBL[1] ;\n10: JMP LBL[404] ;');
+        const withSeverity = severity => advanced.map(rule => rule.check === 'jumpTargets' ? { ...rule, severity } : rule);
+        const asWarning = verifyLs(text, withSeverity('warning'), { fileName: 'MAIN.LS' });
+        assert.deepStrictEqual(asWarning.map(issue => [issue.code, issue.severity]), [['labels', 'error'], ['jumpTargets', 'warning']]);
+        const off = advanced.map(rule => rule.check === 'jumpTargets' ? { ...rule, enabled: false } : rule);
+        assert.deepStrictEqual(verifyLs(text, off, { fileName: 'MAIN.LS' }).map(issue => issue.code), ['labels']);
     });
     test('checks P definitions but leaves PR and indirect P references unresolved', () => {
         const issues = check(program('1: R[1]=P[9,1] ;\n2: PR[99]=P[2] ;\n3: PR[1]=P[R[1]] ;', 'P[2]{\n};'));
@@ -80,8 +158,24 @@ suite('LS advanced checks', () => {
         const upgraded = upgradeRules(JSON.stringify(old));
         const config = JSON.parse(upgraded);
         assert.deepStrictEqual(config.rules[0], old.rules[0]);
-        assert.strictEqual(config.rules.length, 8);
+        const expected = 1 + advanced.length; // the user's own rule plus every advanced check
+        assert.strictEqual(config.rules.length, expected);
+        assert.strictEqual(config.version, defaults.version);
         assert.strictEqual(upgradeRules(upgraded), undefined);
-        assert.strictEqual(parseRules(upgraded).length, 8);
+        assert.strictEqual(parseRules(upgraded).length, expected);
+    });
+    test('version 2 rules gain jumpTargets right after labels, keeping the labels setting', () => {
+        const v2rules = defaults.rules.filter(rule => rule.check !== 'jumpTargets')
+            .map(rule => rule.check === 'labels' ? { ...rule, severity: 'warning', message: 'My labels:' } : rule);
+        const upgraded = JSON.parse(upgradeRules(JSON.stringify({ version: 2, rules: v2rules })));
+        assert.strictEqual(upgraded.version, defaults.version);
+        const labels = upgraded.rules.findIndex(rule => rule.check === 'labels');
+        assert.deepStrictEqual(upgraded.rules[labels], { ...defaults.rules.find(rule => rule.check === 'labels'), severity: 'warning', message: 'My labels:' });
+        assert.deepStrictEqual(upgraded.rules[labels + 1], { id: 'jumpTargets', enabled: true, check: 'jumpTargets', severity: 'warning', message: 'LS jump targets:' });
+        assert.strictEqual(upgraded.rules.length, defaults.rules.length);
+
+        const disabled = v2rules.map(rule => rule.check === 'labels' ? { ...rule, enabled: false } : rule);
+        const upgradedDisabled = JSON.parse(upgradeRules(JSON.stringify({ version: 2, rules: disabled })));
+        assert.strictEqual(upgradedDisabled.rules.find(rule => rule.check === 'jumpTargets').enabled, false);
     });
 });
