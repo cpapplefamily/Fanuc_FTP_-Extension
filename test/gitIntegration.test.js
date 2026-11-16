@@ -236,8 +236,8 @@ suite('Git commits after robot transfers', () => {
 
     test('.gitignore: new file, missing patterns only, line endings, blanks', () => {
         assert.deepStrictEqual(mergeGitignore('', DEFAULT_IGNORE_PATTERNS), {
-            text: '# Files not tracked (robotFtp.git.ignorePatterns)\n*.Sem\n*.Wrk\n',
-            added: ['*.Sem', '*.Wrk']
+            text: '# Files not tracked (robotFtp.git.ignorePatterns)\n*.Sem\n*.Wrk\n*-Restore*/\n',
+            added: ['*.Sem', '*.Wrk', '*-Restore*/']
         });
         assert.deepStrictEqual(mergeGitignore('node_modules\r\n*.Sem\r\n', ['*.Sem', ' *.Wrk ', '', 7]), {
             text: 'node_modules\r\n*.Sem\r\n*.Wrk\r\n',

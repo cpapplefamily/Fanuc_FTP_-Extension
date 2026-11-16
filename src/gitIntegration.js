@@ -15,7 +15,8 @@ const path = require('path');
  */
 
 const DEFAULT_TEMPLATE = '${operation} ${robot} ${date}';
-const DEFAULT_IGNORE_PATTERNS = ['*.Sem', '*.Wrk'];
+// PLC work files, and flat restore copies made by "Make Restore Folder" (<backup>-Restore, <backup>-Restore_02, …).
+const DEFAULT_IGNORE_PATTERNS = ['*.Sem', '*.Wrk', '*-Restore*/'];
 const ADD_CHUNK = 50; // Keep each git command line well under the Windows limit.
 
 function formatDate(date) {

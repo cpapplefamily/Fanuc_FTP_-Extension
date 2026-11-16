@@ -3,7 +3,7 @@
   "displayName": "Robot FTP",
   "description": "VSCODE extension to FTP *.ls file to Fanuc Robot",
   "publisher": "CoreyApplegate",
-  "version": "0.9.11-dev",
+  "version": "0.10.0-dev",
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -112,6 +112,11 @@
       {
         "command": "extension.updateSelectedFileFromRobot",
         "title": "Get Update For This LS File from Robot"
+      },
+      {
+        "command": "extension.makeRestoreFolder",
+        "title": "Make Restore Folder (flat copy for the controller)",
+        "enablement": "explorerResourceIsFolder"
       },
       {
         "command": "extension.downloadAllFiles",
@@ -331,6 +336,10 @@
         {
           "command": "extension.updateSelectedFileFromRobot",
           "group": "2_update@2"
+        },
+        {
+          "command": "extension.makeRestoreFolder",
+          "group": "3_backup@1"
         }
       ]
     },
@@ -371,6 +380,96 @@
           "default": "dated",
           "scope": "resource",
           "description": "Where Get ALL Files and Get All LS Files save the files."
+        },
+        "robotFtp.downloadSort": {
+          "type": "string",
+          "enum": [
+            "sorted",
+            "flat"
+          ],
+          "enumDescriptions": [
+            "Sort downloaded files into sub-folders by type (Programs, System, Diagnostics, …), using robotFtp.downloadFolders.",
+            "Keep all downloaded files in one folder, as on the robot."
+          ],
+          "default": "sorted",
+          "scope": "resource",
+          "description": "How Get ALL Files and Get All LS Files arrange the downloaded files. Use 'Make Restore Folder' to get a flat copy of a sorted backup for restoring a controller."
+        },
+        "robotFtp.downloadFolders": {
+          "type": "object",
+          "default": {
+            "programs": "Programs",
+            "tp": "TP",
+            "registers": "Registers",
+            "io": "IO",
+            "karel": "KAREL",
+            "vision": "Vision",
+            "web": "Web",
+            "systemPrograms": "System/Programs",
+            "systemVariables": "System/Variables",
+            "systemConfig": "System/Config",
+            "diagnostics": "Diagnostics",
+            "other": "Other"
+          },
+          "properties": {
+            "programs": {
+              "type": "string"
+            },
+            "tp": {
+              "type": "string"
+            },
+            "registers": {
+              "type": "string"
+            },
+            "io": {
+              "type": "string"
+            },
+            "karel": {
+              "type": "string"
+            },
+            "vision": {
+              "type": "string"
+            },
+            "web": {
+              "type": "string"
+            },
+            "systemPrograms": {
+              "type": "string"
+            },
+            "systemVariables": {
+              "type": "string"
+            },
+            "systemConfig": {
+              "type": "string"
+            },
+            "diagnostics": {
+              "type": "string"
+            },
+            "other": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "scope": "resource",
+          "markdownDescription": "Folder name template for sorted downloads. `/` makes nested folders (`System/Programs`); an empty name keeps those files at the top. `tp` is the sub-folder for `.tp` binaries inside the folder of their `.ls`. Example: `\"programs\": \"1 Programs\"` to list programs first."
+        },
+        "robotFtp.systemPrograms": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "-BCKED*-",
+            "SV_ADJST",
+            "GETDATA",
+            "SENDDATA",
+            "SENDEVNT",
+            "SENDSYSV",
+            "REQMENU",
+            "CLSKP*"
+          ],
+          "scope": "resource",
+          "markdownDescription": "FANUC-supplied TP programs (names without extension, `*` and `?` wildcards). Sorted downloads put them in the `systemPrograms` folder instead of with your programs."
         },
         "robotFtp.git.onDownload": {
           "type": "string",
@@ -436,10 +535,11 @@
           },
           "default": [
             "*.Sem",
-            "*.Wrk"
+            "*.Wrk",
+            "*-Restore*/"
           ],
           "scope": "resource",
-          "markdownDescription": "Patterns written to `.gitignore` when the extension creates a git repository (for example PLC files `*.Sem`, `*.Wrk`). Uses [.gitignore pattern syntax](https://git-scm.com/docs/gitignore). If a `.gitignore` already exists in that folder, only missing patterns are added."
+          "markdownDescription": "Patterns written to `.gitignore` when the extension creates a git repository: PLC files `*.Sem`, `*.Wrk`, and `*-Restore*/` for the flat copies made by **Make Restore Folder**. Uses [.gitignore pattern syntax](https://git-scm.com/docs/gitignore). If a `.gitignore` already exists in that folder, only missing patterns are added."
         }
       }
     }

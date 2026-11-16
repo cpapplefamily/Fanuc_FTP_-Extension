@@ -82,12 +82,21 @@ function parsePosRegVa(text) {
 }
 
 /** Finds backup files in a folder, ignoring case. Returns { 'ioconfig.dg': fullPath, ... } for files that exist. */
-function findBackupFiles(folderPath) {
+function findBackupFiles(folderPath, depth = 3) {
+    // Searches sub-folders too, since sorted backups keep these in IO/ and Registers/. The shallowest match wins.
     const found = {};
-    for (const name of fs.readdirSync(folderPath)) {
-        const lower = name.toLowerCase();
-        if (BACKUP_FILES.includes(lower)) {
-            found[lower] = path.join(folderPath, name);
+    const subfolders = [];
+    for (const entry of fs.readdirSync(folderPath, { withFileTypes: true })) {
+        const lower = entry.name.toLowerCase();
+        if (entry.isFile() && BACKUP_FILES.includes(lower)) {
+            found[lower] = path.join(folderPath, entry.name);
+        } else if (entry.isDirectory() && entry.name !== '.git' && depth > 0) {
+            subfolders.push(path.join(folderPath, entry.name));
+        }
+    }
+    for (const sub of subfolders) {
+        for (const [name, file] of Object.entries(findBackupFiles(sub, depth - 1))) {
+            if (!found[name]) found[name] = file;
         }
     }
     return found;

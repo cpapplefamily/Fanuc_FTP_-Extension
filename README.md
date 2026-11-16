@@ -21,6 +21,9 @@ This Visual Studio Code extension allows you to interact with a Fanuc robot via 
 - One CSV file per named robot, plus an optional shared file for all robots. **Tan** descriptions come from the robot's own file and **pink** descriptions come from the shared file (see [What the colors mean](#what-the-colors-mean)).
 - Descriptions reload automatically when the CSV files are saved.
 
+### Sorted Backups:
+- **Get ALL Files** and **Get All LS Files** sort the downloaded files into sub-folders by type (Programs, System, Diagnostics, …). See [Sorted downloads](#sorted-downloads).
+
 ### Git Commits:
 - After a download or upload, enter a commit message and the transferred files are committed. See [Git integration](#git-integration).
 
@@ -290,6 +293,50 @@ PR[3],"Pounce, above fixture"
 
 Descriptions are not shown inside `!` remarks, or on references that already carry a robot comment such as `DO[1:Clamp]`.
 
+## Sorted downloads
+
+A full backup has 200–400 files. Only about a quarter are programs you edit; the rest are system variables, configuration and diagnostics. **Get ALL Files from Robot** and **Get All LS Files from Robot** therefore sort the files into sub-folders:
+
+```
+2026-11-16-ALL_01/
+  Programs/            your TP programs and macros (.ls)
+    TP/                their .tp binaries
+  Registers/           NUMREG, POSREG, STRREG, PALREG (.va, .vr)
+  IO/                  DIOCFGSV.IO/.VA, IOCONFIG.DG, IOSTATE.DG, IOSTATUS.CM
+  KAREL/               KAREL programs (.pc) and their variables
+  Vision/              iRVision (.vd, .vda, .cam)
+  Web/                 iPendant web screens (.stm, .gif, PANELn.DT)
+  System/
+    Programs/          FANUC-supplied TP programs (-BCKED*-, SV_ADJST, …)
+      TP/
+    Variables/         system variables (.sv) and other .va/.vr
+    Config/            .df, .dt, .xml, .cm, .dat
+  Diagnostics/         .dg reports, .zip dumps, alarm and log listings (ERRALL, LOGBOOK, …)
+```
+
+The rules come from 45 real backups of 16 robots. **Send Folder** on `Programs` sends your programs and macros, without the FANUC system programs.
+
+Settings:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `robotFtp.downloadSort` | `sorted` | `flat` keeps every file in one folder, as on the robot |
+| `robotFtp.downloadFolders` | see above | Folder name template. Rename any folder, e.g. `"programs": "1 Programs"` so it lists first. `/` makes nested folders; an empty name keeps those files at the top. `tp` is the sub-folder for `.tp` files inside the folder of their `.ls`. |
+| `robotFtp.systemPrograms` | `-BCKED*-`, `SV_ADJST`, `GETDATA`, `SENDDATA`, `SENDEVNT`, `SENDSYSV`, `REQMENU`, `CLSKP*` | FANUC-supplied program names (`*` and `?` wildcards) that go to `System/Programs`. Add names for options your robots have. |
+
+Example `settings.json`:
+
+```json
+"robotFtp.downloadFolders": { "programs": "1 Programs", "diagnostics": "9 Diagnostics" },
+"robotFtp.systemPrograms": ["-BCKED*-", "SV_ADJST", "GETDATA", "SENDDATA", "SENDEVNT", "SENDSYSV", "REQMENU", "CLSKP*", "MYOPTION*"]
+```
+
+### Restoring a controller from a sorted backup
+
+A FANUC controller restores from **one folder** with every file in it. Right-click a sorted backup folder and choose **MNAutomation → Get from Robot → Make Restore Folder**. It copies every file into a new folder next to it (`2026-11-16-ALL_01-Restore`), all at one level. Copy that folder's contents to a USB stick or memory card. The sorted backup is not changed.
+
+Restore folders are copies, so git should not track them. New repositories created by the extension ignore them (`*-Restore*/` in `.gitignore`). In an existing repository, add `*-Restore*/` to its `.gitignore` yourself.
+
 ## Git integration
 
 Keep a history of every trip to the robot. After a robot transfer finishes **without errors**, the extension asks for a commit message and commits **only the files from that transfer**:
@@ -320,7 +367,7 @@ Details:
 | `robotFtp.git.messageTemplate` | `${operation} ${robot} ${date}` | Variables: `${operation}`, `${robot}` (name and IP), `${name}`, `${ip}`, `${date}`, `${count}`, `${folder}` |
 | `robotFtp.git.push` | `never` | `ask` or `always` push after committing. Repositories without a remote are never pushed. |
 | `robotFtp.git.offerInit` | `true` | `false` to never offer to create a repository |
-| `robotFtp.git.ignorePatterns` | `*.Sem`, `*.Wrk` | Patterns written to `.gitignore` when the extension creates a repository. Add your own in Settings (search for *ignorePatterns*, then **Add Item**). |
+| `robotFtp.git.ignorePatterns` | `*.Sem`, `*.Wrk`, `*-Restore*/` | Patterns written to `.gitignore` when the extension creates a repository. Add your own in Settings (search for *ignorePatterns*, then **Add Item**). |
 | `robotFtp.downloadLayout` | `dated` | `fixed`: see below |
 
 All settings can be set per workspace, so one customer project can turn commits off without affecting others.
@@ -337,12 +384,12 @@ Only the commit prompts need Git. Downloads, uploads, the LS checker, descriptio
 
 ### Files git should ignore
 
-When the extension creates a repository, it writes `.gitignore` in the repository folder with the patterns from `robotFtp.git.ignorePatterns`. The defaults are `*.Sem` and `*.Wrk` (PLC work files). If a `.gitignore` is already there, only patterns that are missing are added.
+When the extension creates a repository, it writes `.gitignore` in the repository folder with the patterns from `robotFtp.git.ignorePatterns`. The defaults are `*-Restore*/` (the flat copies made by [Make Restore Folder](#restoring-a-controller-from-a-sorted-backup), which duplicate a backup) and `*.Sem` and `*.Wrk` (PLC work files). If a `.gitignore` is already there, only patterns that are missing are added.
 
 To change the list, open Settings, search for **ignorePatterns**, and use **Add Item**, or edit `settings.json`:
 
 ```json
-"robotFtp.git.ignorePatterns": ["*.Sem", "*.Wrk", "*.bak", "Backup/"]
+"robotFtp.git.ignorePatterns": ["*.Sem", "*.Wrk", "*-Restore*/", "*.bak", "Backup/"]
 ```
 
 Patterns use the normal [.gitignore syntax](https://git-scm.com/docs/gitignore). Changing the setting does not edit `.gitignore` files in repositories that already exist; edit those files directly.

@@ -16,6 +16,7 @@ const {
 const {
     BACKUP_FILES, findBackupFiles, readBackupDescriptions, compareDescriptions, combineDescriptions, serializeDescriptionsCsv
 } = require('./backupDescriptions');
+const { DEFAULT_FOLDERS, DEFAULT_SYSTEM_PROGRAMS, sortDownloadedFiles, listFilesRecursive, planRestoreFolder } = require('./backupSort');
 const { DEFAULT_TEMPLATE, DEFAULT_IGNORE_PATTERNS, mergeGitignore, offerCommit, initChoicesFor } = require('./gitIntegration');
 const {
     loadSnippetDefinitions,
@@ -200,6 +201,7 @@ async function activate(context) {
     ));
     context.subscriptions.push(vscode.commands.registerCommand('extension.editRobotList', openRobotList));
     context.subscriptions.push(vscode.commands.registerCommand('extension.resetReminders', resetReminders));
+    context.subscriptions.push(vscode.commands.registerCommand('extension.makeRestoreFolder', makeRestoreFolder));
 
     const managedSnippetFilePath = ensureManagedSnippetFile(context);
     const loadedManagedSnippets = loadSnippetFile(managedSnippetFilePath, 'User', false);
@@ -1159,8 +1161,26 @@ async function f_downloadFromRobot(destinationUri, isFolder, fileType, saveType)
                     client.trackProgress();
                 }
                 
+                // Sort into sub-folders by type (Programs, System, Diagnostics, …) unless the user wants a flat folder.
+                let savedFiles = receivedFiles;
+                const sortConfig = vscode.workspace.getConfiguration('robotFtp', destinationUri);
+                if (sortConfig.get('downloadSort', 'sorted') === 'sorted') {
+                    try {
+                        savedFiles = sortDownloadedFiles(dateFolderPath, receivedFiles, {
+                            folders: sortConfig.get('downloadFolders', DEFAULT_FOLDERS),
+                            systemPrograms: sortConfig.get('systemPrograms', DEFAULT_SYSTEM_PROGRAMS)
+                        });
+                        outputChannel.appendLine(`Sorted ${savedFiles.length} file(s) into sub-folders of ${dateFolderPath}`);
+                    } catch (error) {
+                        outputChannel.appendLine(`Warning: Could not sort the downloaded files: ${error.message}`);
+                        vscode.window.showWarningMessage(`Files were downloaded but could not all be sorted into sub-folders: ${error.message}`);
+                        // Some files may already be moved: use whatever is in the download folder now.
+                        savedFiles = listFilesRecursive(dateFolderPath).map(relative => path.join(dateFolderPath, relative));
+                    }
+                }
+
                 vscode.window.showInformationMessage(`${fileType === "*" ? "All" : fileType} files downloaded successfully to ${dateFolderPath}`);
-                transfer = { kind: 'download', operation: fileType === '*' ? 'Download all files' : 'Download LS files', files: receivedFiles, folder: dateFolderPath, robotName: robot.name, ip: ipAddress };
+                transfer = { kind: 'download', operation: fileType === '*' ? 'Download all files' : 'Download LS files', files: savedFiles, folder: dateFolderPath, robotName: robot.name, ip: ipAddress };
 
                 // If this robot has no descriptions yet, get its comment files while still connected.
                 missingDescriptions = findRobotMissingDescriptions(destinationPath, ipAddress);
@@ -1189,6 +1209,59 @@ async function f_downloadFromRobot(destinationUri, isFolder, fileType, saveType)
 }
 
 const SKIP_DESCRIPTIONS_PROMPT_KEY = 'robotFtp.skipDescriptionsPrompt';
+
+/**
+ * Copies a sorted backup into one flat folder next to it ("<name>-Restore"), the layout a FANUC controller
+ * expects when restoring from a USB stick or memory card. The sorted backup is not changed.
+ */
+async function makeRestoreFolder(resourceUri) {
+    if (!resourceUri || !fs.existsSync(resourceUri.fsPath) || !fs.statSync(resourceUri.fsPath).isDirectory()) {
+        vscode.window.showErrorMessage('Right-click a backup folder (from Get ALL Files from Robot) to make a restore folder.');
+        return;
+    }
+    const source = resourceUri.fsPath;
+    try {
+        const { copies, duplicates } = planRestoreFolder(source);
+        if (copies.length === 0) {
+            vscode.window.showWarningMessage(`${path.basename(source)} has no files.`);
+            return;
+        }
+        let target = `${source}-Restore`;
+        for (let n = 2; fs.existsSync(target); n++) {
+            target = `${source}-Restore_${String(n).padStart(2, '0')}`;
+        }
+        if (duplicates.length > 0) {
+            const go = 'Make Restore Folder';
+            const answer = await vscode.window.showWarningMessage(
+                `${duplicates.length} file name(s) appear in more than one sub-folder: ${duplicates.slice(0, 5).join(', ')}${duplicates.length > 5 ? ', …' : ''}`,
+                { modal: true, detail: 'A flat folder can hold only one file with each name. The first one found is copied and the others are skipped.' },
+                go
+            );
+            if (answer !== go) return;
+        }
+        await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title: `Making restore folder ${path.basename(target)}` },
+            async progress => {
+                fs.mkdirSync(target, { recursive: true });
+                copies.forEach((copy, index) => {
+                    fs.copyFileSync(copy.from, path.join(target, copy.name));
+                    if (index % 25 === 0) progress.report({ message: `${index + 1} of ${copies.length}` });
+                });
+            }
+        );
+        outputChannel.appendLine(`Restore folder: copied ${copies.length} file(s) from ${source} to ${target}${duplicates.length ? `; skipped duplicates: ${duplicates.join(', ')}` : ''}`);
+        const reveal = 'Show in File Explorer';
+        const choice = await vscode.window.showInformationMessage(
+            `Made restore folder ${path.basename(target)} with ${copies.length} file(s), all in one folder. Copy its contents to a USB stick or memory card to restore the controller.`,
+            reveal
+        );
+        if (choice === reveal) {
+            await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(target));
+        }
+    } catch (error) {
+        vscode.window.showErrorMessage(`Could not make the restore folder: ${error.message}`);
+    }
+}
 
 /** Turns back on every "Don't remind me" / "Don't ask again" choice. */
 async function resetReminders() {

@@ -6,6 +6,13 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.10.0-dev] - 2026-11-16
+
+- **Get ALL Files** and **Get All LS Files** sort the downloaded files into sub-folders by type: Programs (with `.tp` in `Programs/TP`), Registers, IO, KAREL, Vision, Web, System/Programs, System/Variables, System/Config, Diagnostics. Rules based on 45 real backups. New settings: `robotFtp.downloadSort` (`sorted` / `flat`), `robotFtp.downloadFolders` (folder name template), `robotFtp.systemPrograms` (FANUC program names).
+- New **Get from Robot → Make Restore Folder**: copies a sorted backup into one flat folder for restoring a controller from a USB stick or memory card.
+- `robotFtp.git.ignorePatterns` now also includes `*-Restore*/` by default, so new repositories do not track restore folders.
+- **Create Descriptions from Backup** and the after-download descriptions prompt find the comment files in sub-folders.
+
 ## [0.9.11-dev] - 2026-11-16
 
 - **Get from Robot** and **Send to Robot** are now at the top of the MNAutomation menu.
