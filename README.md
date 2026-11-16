@@ -224,7 +224,7 @@ Every robot command asks which robot to use. The list comes from `.vscode/robot-
 {
   "robots": [
     { "name": "ST02", "ip": "192.168.1.12", "folder": "Robots/ST02", "port": null },
-    { "name": "St04", "ip": "192.168.1.14", "folder": "Robots/St04", "port": null },
+    { "name": "St04", "ip": "192.168.1.14", "folder": "Robots/St04", "port": 21 },
     { "name": "RoboGuide", "ip": "127.0.0.2", "folder": null, "port": 9125 }
   ],
   "recent": ["192.168.1.14", "192.168.1.12"]
