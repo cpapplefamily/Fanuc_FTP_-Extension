@@ -1,0 +1,40 @@
+# Check every push and pull request: lint, snippet tests, and a test package.
+# The .vsix is kept for 14 days under the run's Artifacts.
+
+name: CI
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test snippet loading
+        run: npm run test:snippets
+
+      - name: Package VSIX
+        run: npx --yes @vscode/vsce@3.2.1 package --out robot-ftp.vsix
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: robot-ftp-vsix
+          path: robot-ftp.vsix
+          retention-days: 14

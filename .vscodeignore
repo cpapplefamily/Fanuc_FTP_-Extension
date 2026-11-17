@@ -10,5 +10,11 @@ vsc-extension-quickstart.md
 **/.vscode-test.*
 *.vsix
 .agents/**
-azure-pipelines.yml
-docs/secure-publishing.md
+.github/**
+docs/publishing.md
+AGENTS.md
+.prompt.md
+.instructions.md
+UPGRADE_ROADMAP.md
+test-ftp-connection.js
+**/*.old

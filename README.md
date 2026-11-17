@@ -589,4 +589,4 @@ This extension's syntax highlighting is based on the work from [TPSyntaxHighligh
 
 ## Publishing
 
-Marketplace releases use Microsoft Entra workload identity federation through Azure Pipelines; no Personal Access Token is stored in the repository or pipeline. See [Secure Visual Studio Marketplace publishing](docs/secure-publishing.md) for setup and release instructions.
+Pushing a `v*` tag builds the `.vsix` and creates a GitHub Release; the `.vsix` is then uploaded to the Marketplace by hand. See [Publishing a release](docs/publishing.md).

@@ -1,0 +1,82 @@
+# Build a release when a version tag is pushed:
+#
+#   git tag v0.10.0
+#   git push origin v0.10.0
+#
+# Creates a GitHub Release with the .vsix attached. Upload that .vsix to the
+# Marketplace by hand (docs/publishing.md).
+#
+# Version rule: an even minor number (0.10.x, 0.12.x) is a stable release;
+# an odd minor number (0.11.x, 0.13.x) is packaged as a Marketplace pre-release.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # create the GitHub Release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test snippet loading
+        run: npm run test:snippets
+
+      - name: Check version
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$TAG_VERSION" != "$VERSION" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $VERSION."
+            exit 1
+          fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::The Marketplace only accepts major.minor.patch versions; $VERSION has a suffix."
+            exit 1
+          fi
+          MINOR=$(echo "$VERSION" | cut -d. -f2)
+          if (( MINOR % 2 == 1 )); then PRE=--pre-release; else PRE=; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "pre=$PRE" >> "$GITHUB_OUTPUT"
+          echo "Version $VERSION ${PRE:-(stable)}"
+
+      - name: Package VSIX
+        run: npx --yes @vscode/vsce@3.2.1 package ${{ steps.version.outputs.pre }} --out robot-ftp-${{ steps.version.outputs.version }}.vsix
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Notes = this version's section of CHANGELOG.md
+          awk -v v="$VERSION" '
+            index($0, "## [" v "]") == 1 { on = 1; next }
+            on && /^## \[/ { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          [[ -s notes.md ]] || echo "See CHANGELOG.md." > notes.md
+          PRERELEASE=""
+          [[ -n "${{ steps.version.outputs.pre }}" ]] && PRERELEASE="--prerelease"
+          gh release create "$GITHUB_REF_NAME" "robot-ftp-$VERSION.vsix" \
+            --title "Robot FTP $VERSION" --notes-file notes.md $PRERELEASE

@@ -6,6 +6,24 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-17
+
+First Marketplace release since 0.5.0. Highlights (details in the `-dev` entries below):
+
+- **Menus:** right-click → **MNAutomation** now has **Get from Robot**, **Send to Robot**, **LS Checker**, **Descriptions** and **Snippets** submenus.
+- **Named robots:** save robots with a name, IP, optional folder and FTP port in `.vscode/robot-ftp.json` (**Edit Robot List**). Recent IPs are shared by the whole project.
+- **LS checker:** checks LS files for common errors (colons, semicolons, sections, brackets, labels/jumps, positions, motion fields, `--eg:` remarks) with editable rules. Files are checked before every upload; critical errors block the upload.
+- **Rename LS File:** renames the program and updates `/PROG` and the program comment.
+- **Descriptions:** I/O and register comments shown next to `DO[..]`, `R[..]`, `PR[..]` etc., from per-robot CSV files in `.vscode/descriptions`. Create them from the robot or from a backup.
+- **Sorted backups:** **Get ALL Files** sorts files into sub-folders by type; **Make Restore Folder** copies a backup into one flat folder for a USB restore.
+- **Git:** optionally commit the transferred files after each download or upload.
+- **Snippets:** triggers without spaces (`frames`, `todo`, `LBL`, `JMP`, `eg`, `CALL`).
+
+### Upgrading from 0.5.0
+
+- `ip.txt` and `recent-ips.json` are no longer used. Pick or type the robot IP once; it is remembered for the project. Use **Edit Robot List** to save robots by name.
+- `descriptions.csv` files next to LS files are no longer read. Use **MNAutomation → Descriptions** to create the new files.
+
 ## [0.10.0-dev] - 2026-11-16
 
 - **Get ALL Files** and **Get All LS Files** sort the downloaded files into sub-folders by type: Programs (with `.tp` in `Programs/TP`), Registers, IO, KAREL, Vision, Web, System/Programs, System/Variables, System/Config, Diagnostics. Rules based on 45 real backups. New settings: `robotFtp.downloadSort` (`sorted` / `flat`), `robotFtp.downloadFolders` (folder name template), `robotFtp.systemPrograms` (FANUC program names).
