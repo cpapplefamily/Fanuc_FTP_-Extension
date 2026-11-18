@@ -573,6 +573,7 @@
   "scripts": {
     "lint": "eslint .",
     "test:snippets": "mocha --ui tdd test/externalSnippets.test.js",
+    "test:unit": "mocha --ui tdd test/*.test.js",
     "pretest": "npm run lint",
     "test": "vscode-test"
   },

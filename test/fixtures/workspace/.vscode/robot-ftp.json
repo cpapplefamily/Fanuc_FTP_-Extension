@@ -1,0 +1,12 @@
+{
+  "robots": [
+    {
+      "name": "TEST",
+      "ip": "127.0.0.1",
+      "folder": "Robot",
+      "port": 1,
+      "httpPort": 1
+    }
+  ],
+  "recent": []
+}

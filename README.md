@@ -634,6 +634,13 @@ For a project-only file, add the Fanuc language scope:
 
 This extension's syntax highlighting is based on the work from [TPSyntaxHighlighter](https://github.com/alek5k/TPSyntaxHighlighter). We appreciate the contributions made by the original author. 
 
+## Running the tests
+
+- `npm test`: lint, then every test inside a test copy of VS Code with the extension loaded. Unit tests are in `test/*.test.js`. Integration tests are in `test/integration/`. They run commands the way menus and the editor call them, in a fresh copy of `test/fixtures/workspace` (robot `TEST`, `Robot/MAIN.LS`, `TEST.csv`). Prompts are replaced by stubs, and no robot connection is made.
+- `npm run test:unit`: the unit tests only, with plain mocha. Faster, and needs no VS Code.
+
+The test launcher fails when the repository path contains a space, so clone it to a path without one.
+
 ## Publishing
 
 Pushing a `v*` tag builds the `.vsix` and creates a GitHub Release; the `.vsix` is then uploaded to the Marketplace by hand. See [Publishing a release](docs/publishing.md).
