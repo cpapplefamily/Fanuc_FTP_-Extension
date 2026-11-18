@@ -3,7 +3,7 @@
   "displayName": "Robot FTP",
   "description": "VSCODE extension to FTP *.ls file to Fanuc Robot",
   "publisher": "CoreyApplegate",
-  "version": "0.10.0",
+  "version": "0.11.0-dev",
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -155,6 +155,10 @@
       {
         "command": "extension.getDescriptionsFromRobot",
         "title": "Get Descriptions from Robot"
+      },
+      {
+        "command": "extension.sendDescriptionsToRobot",
+        "title": "Send Descriptions to Robot"
       }
     ],
     "keybindings": [
@@ -276,6 +280,10 @@
         {
           "command": "extension.editDescriptions",
           "group": "2_edit@1"
+        },
+        {
+          "command": "extension.sendDescriptionsToRobot",
+          "group": "3_send@1"
         }
       ],
       "MNAutomation.lsChecker": [

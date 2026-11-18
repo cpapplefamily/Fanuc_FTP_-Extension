@@ -6,6 +6,11 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.11.0-dev] - 2026-11-18
+
+- New **MNAutomation → Descriptions → Send Descriptions to Robot**: sends the robot's descriptions (and `shared.csv`) to the robot as I/O and register comments. Reads the robot's comments first and sends only the rows that differ, after a confirmation that lists them; then reads them back to check. Uses the controller's built-in `ComSet` web program (no KAREL option needed; KAREL must be unlocked under Setup → Host Comm → HTTP). `UI`/`UO` are skipped.
+- Robots in `.vscode/robot-ftp.json` can set `httpPort` for the robot's web server (RoboGuide, port forwarding). Default 80.
+
 ## [0.10.0] - 2026-11-17
 
 First Marketplace release since 0.5.0. Highlights (details in the `-dev` entries below):

@@ -244,6 +244,7 @@ The robot already has comments for its I/O and registers. Copy them into a descr
 | **Get Descriptions from Robot** | You can connect to the robot. Downloads only the five comment files, nothing else. |
 | **Create Descriptions from Backup** | You already have a backup folder (for example from **Get ALL Files from Robot**). Right-click that folder. |
 | **Edit Descriptions** | You want to open a descriptions file and edit it by hand. |
+| **Send Descriptions to Robot** | You changed descriptions in VS Code and want the robot's I/O and register comments to match. |
 
 **Get Descriptions from Robot:**
 
@@ -275,6 +276,24 @@ Downloads from an IP that is not a named robot are not checked, because descript
 | `strreg.va` | `SR` |
 
 Only items with a comment are added. Comments that are only spaces are skipped. If some of these files are missing from the folder, the command uses the ones it finds.
+
+### Send descriptions to the robot
+
+**MNAutomation → Descriptions → Send Descriptions to Robot** writes your descriptions back to the robot as I/O and register comments.
+
+1. Right-click the robot's folder and run the command. Pick the robot in the IP picker.
+2. The robot's current comments are read over FTP and compared with the robot's file plus `shared.csv` (the robot's file wins for the same key).
+3. A list shows only the rows that differ, for example `DI[2]: "Spare" → "Test Update"`. Choose **Send**.
+4. Each comment is sent, then the comments are read back to check them. A comment that reads back differently was probably too long for the robot's comment field; the Output panel shows the details.
+
+Comments on the robot that are not in your files are not changed, and an empty row does not clear a comment on the robot.
+
+**How it works:** the comments are sent through `ComSet`, a small KAREL program that comes installed on the controller and backs the robot's web **Comment Tool**. You do not need the KAREL software option. The robot must allow it:
+
+- **Setup → Host Comm → HTTP**: set the **KAREL** entry to unlocked. If it is locked, the robot answers *"Protected feature, cannot issue from here"* and the command stops with that message.
+- The robot's web server must be reachable from your PC on port 80. For RoboGuide or a robot behind port forwarding, set `httpPort` for the robot in **Edit Robot List** (RoboGuide shows its HTTP port in the cell's robot properties; for example `9000`).
+
+Supported: `DI`, `DO`, `RI`, `RO`, `GI`, `GO`, `AI`, `AO`, `R`, `PR` (group 1), `SR`, `F`. `UI` and `UO` comments cannot be set this way; they are listed in the Output panel and skipped.
 
 ### CSV format
 
@@ -430,7 +449,7 @@ Every robot command asks which robot to use. The list comes from `.vscode/robot-
   "robots": [
     { "name": "ST02", "ip": "192.168.1.12", "folder": "Robots/ST02", "port": null },
     { "name": "St04", "ip": "192.168.1.14", "folder": "Robots/St04", "port": 21 },
-    { "name": "RoboGuide", "ip": "127.0.0.2", "folder": null, "port": 9125 }
+    { "name": "RoboGuide", "ip": "127.0.0.2", "folder": null, "port": 9125, "httpPort": 9000 }
   ],
   "recent": ["192.168.1.14", "192.168.1.12"]
 }
@@ -439,6 +458,7 @@ Every robot command asks which robot to use. The list comes from `.vscode/robot-
 - **`robots`**: named robots for the job. They are never removed automatically.
   - `folder` (optional, relative to the workspace folder): when a command runs anywhere inside this folder, this robot is listed first and marked *this folder*. If several folders match, the deepest one wins.
   - `port` (optional): the FTP port for this robot. Leave it out or set it to `null` to use the `robotFtp.port` setting.
+  - `httpPort` (optional): the robot's web server port, used by **Send Descriptions to Robot**. Leave it out for port 80.
 - **`recent`**: the last five IPs used in the project, newest first.
 
 The picker lists, in order: the robot for the current folder, recent IPs (with the robot name when known), the other named robots, the built-in IPs (192.168.10.124, RoboGuide 127.0.0.2), and **Other**. Choosing **Other** lets you type an IP and then save it as a named robot, choosing its folder and port.

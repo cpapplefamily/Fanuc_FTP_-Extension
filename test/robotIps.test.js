@@ -89,6 +89,25 @@ suite('Project robot IP history', () => {
         assert.deepStrictEqual(cleanRobots(undefined), { robots: [], problems: [] });
     });
 
+    test('keeps a valid httpPort and reports a bad one', () => {
+        const { robots, problems } = cleanRobots([
+            { name: 'RG', ip: '127.0.0.1', port: 9125, httpPort: 9000 },
+            { name: 'Bad', ip: '10.0.0.9', httpPort: 0 }
+        ]);
+        assert.deepStrictEqual(robots, [
+            { name: 'RG', ip: '127.0.0.1', port: 9125, httpPort: 9000 },
+            { name: 'Bad', ip: '10.0.0.9' }
+        ]);
+        assert.strictEqual(problems.length, 1);
+    });
+
+    test('saving a robot again keeps its httpPort', () => {
+        fs.mkdirSync(path.dirname(getProjectIpsPath(root)), { recursive: true });
+        fs.writeFileSync(getProjectIpsPath(root), JSON.stringify({ robots: [{ name: 'RG', ip: '127.0.0.1', httpPort: 9000 }] }));
+        saveProjectRobot(root, { name: 'RG', ip: '127.0.0.2', port: 9125 });
+        assert.strictEqual(readProjectConfig(root).robots[0].httpPort, 9000);
+    });
+
     test('matches the deepest robot folder, case-insensitive on Windows', () => {
         const robots = [
             { name: 'Cell', ip: '10.0.0.1', folder: 'Robots' },

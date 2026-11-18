@@ -16,6 +16,7 @@ const {
 const {
     BACKUP_FILES, findBackupFiles, readBackupDescriptions, compareDescriptions, combineDescriptions, serializeDescriptionsCsv
 } = require('./backupDescriptions');
+const { planDescriptionPush, sendComment } = require('./pushDescriptions');
 const { DEFAULT_FOLDERS, DEFAULT_SYSTEM_PROGRAMS, sortDownloadedFiles, listFilesRecursive, planRestoreFolder } = require('./backupSort');
 const { DEFAULT_TEMPLATE, DEFAULT_IGNORE_PATTERNS, mergeGitignore, offerCommit, initChoicesFor } = require('./gitIntegration');
 const {
@@ -562,6 +563,7 @@ function registerDescriptionHints(context) {
         vscode.commands.registerCommand('extension.editDescriptions', editDescriptions),
         vscode.commands.registerCommand('extension.createDescriptionsFromBackup', createDescriptionsFromBackup),
         vscode.commands.registerCommand('extension.getDescriptionsFromRobot', getDescriptionsFromRobot),
+        vscode.commands.registerCommand('extension.sendDescriptionsToRobot', sendDescriptionsToRobot),
         { dispose: () => clearTimeout(pending) }
     );
     updateAllDescriptionDecorations();
@@ -615,13 +617,7 @@ async function getDescriptionsFromRobot(resourceUri) {
             async progress => {
                 await withRobotConnection(ownerPath, 'GetDescriptions', async (client, ipAddress) => {
                     robotIp = ipAddress;
-                    const remoteFiles = (await client.list()).filter(file => file.isFile && BACKUP_FILES.includes(file.name.toLowerCase()));
-                    for (const file of remoteFiles) {
-                        progress.report({ message: file.name });
-                        outputChannel.appendLine(`Downloading file: ${file.name}`);
-                        await client.downloadTo(path.join(tempFolder, file.name), file.name);
-                    }
-                    outputChannel.appendLine(`Downloaded ${remoteFiles.length} of ${BACKUP_FILES.length} description files from ${ipAddress}.`);
+                    await downloadCommentFiles(client, tempFolder, progress, ipAddress);
                 });
             }
         );
@@ -632,6 +628,148 @@ async function getDescriptionsFromRobot(resourceUri) {
     } finally {
         fs.rmSync(tempFolder, { recursive: true, force: true });
     }
+}
+
+/** Downloads the robot's comment files (ioconfig.dg, numreg.va, ...) into folder. Returns how many were found. */
+async function downloadCommentFiles(client, folder, progress, ipAddress) {
+    const remoteFiles = (await client.list()).filter(file => file.isFile && BACKUP_FILES.includes(file.name.toLowerCase()));
+    for (const file of remoteFiles) {
+        progress?.report({ message: file.name });
+        outputChannel.appendLine(`Downloading file: ${file.name}`);
+        await client.downloadTo(path.join(folder, file.name), file.name);
+    }
+    outputChannel.appendLine(`Downloaded ${remoteFiles.length} of ${BACKUP_FILES.length} description files from ${ipAddress}.`);
+    return remoteFiles.length;
+}
+
+/** The robot's current comments (Map key → text), read over FTP into a temporary folder. */
+async function readRobotComments(client, progress, ipAddress) {
+    const tempFolder = fs.mkdtempSync(path.join(os.tmpdir(), 'robot-ftp-descriptions-'));
+    try {
+        await downloadCommentFiles(client, tempFolder, progress, ipAddress);
+        return readBackupDescriptions(findBackupFiles(tempFolder)).descriptions;
+    } finally {
+        fs.rmSync(tempFolder, { recursive: true, force: true });
+    }
+}
+
+/**
+ * Sends the shared + robot descriptions to the robot as I/O and register comments.
+ * Only rows that differ from the robot's current comments are sent, then the comments are read back to check them.
+ */
+async function sendDescriptionsToRobot(resourceUri) {
+    let ownerPath;
+    if (resourceUri && fs.existsSync(resourceUri.fsPath)) {
+        ownerPath = fs.statSync(resourceUri.fsPath).isDirectory() ? resourceUri.fsPath : path.dirname(resourceUri.fsPath);
+    }
+    const workspaceFolder = (ownerPath && vscode.workspace.getWorkspaceFolder(vscode.Uri.file(ownerPath)))
+        || await selectWorkspaceFolder(resourceUri);
+    if (!workspaceFolder) {
+        vscode.window.showErrorMessage('Open the job folder first. Descriptions are read from its .vscode/descriptions folder.');
+        return;
+    }
+    const workspaceRoot = workspaceFolder.uri.fsPath;
+    ownerPath = ownerPath || workspaceRoot;
+    const relative = filePath => path.relative(workspaceRoot, filePath).split(path.sep).join('/');
+
+    await withRobotConnection(ownerPath, 'SendDescriptions', async (client, ipAddress, picked) => {
+        // Which files apply: the named robot's own file over shared.csv. An unnamed IP gets shared.csv only.
+        const { robots } = readIpConfig(workspaceRoot);
+        const robot = (picked.name && robots.find(candidate => candidate.name === picked.name))
+            || robots.find(candidate => candidate.ip === ipAddress && candidate.port === picked.port);
+        const sharedPath = getSharedDescriptionsPath(workspaceRoot);
+        const robotPath = robot ? getRobotDescriptionsPath(workspaceRoot, robot) : undefined;
+        if (!robot) {
+            outputChannel.appendLine(`No named robot for ${ipAddress}; sending ${relative(sharedPath)} only.`);
+        }
+        const merged = mergeDescriptions(readDescriptionsFile(sharedPath), robotPath ? readDescriptionsFile(robotPath) : undefined);
+        const local = new Map([...merged].map(([key, entry]) => [key, entry.text]));
+        const fileList = [robotPath, sharedPath].filter(Boolean).map(relative).join(' and ');
+        if (local.size === 0) {
+            vscode.window.showWarningMessage(`No descriptions to send. ${fileList} has no rows.`);
+            return;
+        }
+
+        const robotLabel = robot ? `${robot.name} (${ipAddress})` : ipAddress;
+        const httpPort = robot?.httpPort ?? 80;
+        const plan = await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title: `Reading the comments on ${robotLabel}` },
+            async progress => planDescriptionPush(local, await readRobotComments(client, progress, ipAddress))
+        );
+
+        if (plan.unsupported.length > 0) {
+            outputChannel.appendLine(`Not sent (the robot's web comment tool cannot set these types): ${plan.unsupported.join(', ')}`);
+        }
+        if (plan.send.length === 0) {
+            const skipped = plan.unsupported.length > 0 ? ` ${plan.unsupported.length} UI/UO row(s) differ but cannot be sent; see the Output panel.` : '';
+            vscode.window.showInformationMessage(`${robotLabel} already has all ${plan.unchanged} description(s).${skipped}`);
+            return;
+        }
+
+        const describeChange = item => `${item.key}: ${item.current === undefined ? '(none)' : `"${item.current}"`} → "${item.text}"`;
+        outputChannel.appendLine(`Descriptions to send to ${robotLabel} (web port ${httpPort}):`);
+        plan.send.forEach(item => outputChannel.appendLine(`  ${describeChange(item)}`));
+        const shown = plan.send.slice(0, 12).map(describeChange);
+        if (plan.send.length > shown.length) {
+            shown.push(`… and ${plan.send.length - shown.length} more (see the Output panel)`);
+        }
+        const sendButton = 'Send';
+        const choice = await vscode.window.showWarningMessage(
+            `Send ${plan.send.length} description(s) to ${robotLabel}?`,
+            {
+                modal: true,
+                detail: `${shown.join('\n')}\n\n${plan.unchanged} already match.${plan.unsupported.length ? ` ${plan.unsupported.length} UI/UO row(s) cannot be sent.` : ''} Comments on the robot that are not in ${fileList} are not changed.`
+            },
+            sendButton
+        );
+        if (choice !== sendButton) {
+            return;
+        }
+
+        let sent = 0;
+        let failure;
+        await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title: `Sending descriptions to ${robotLabel}`, cancellable: true },
+            async (progress, token) => {
+                for (const item of plan.send) {
+                    if (token.isCancellationRequested) {
+                        break;
+                    }
+                    progress.report({ message: `${item.key} (${sent + 1} of ${plan.send.length})`, increment: 100 / plan.send.length });
+                    const error = await sendComment(ipAddress, httpPort, item);
+                    if (error) {
+                        failure = { item, error };
+                        break;
+                    }
+                    sent++;
+                }
+            }
+        );
+        outputChannel.appendLine(`Sent ${sent} of ${plan.send.length} description(s) to ${robotLabel}.`);
+        if (failure) {
+            outputChannel.appendLine(`ERROR sending ${failure.item.key}: ${failure.error}`);
+            const hint = robot && !robot.httpPort && httpPort === 80 && /ECONNREFUSED|No answer/.test(failure.error)
+                ? ` For RoboGuide or a port-forwarded robot, add "httpPort" to ${robot.name} in Edit Robot List.`
+                : '';
+            vscode.window.showErrorMessage(`Sent ${sent} of ${plan.send.length}. ${failure.item.key} failed: ${failure.error}${hint}`);
+            if (sent === 0) {
+                return;
+            }
+        }
+
+        // Read the comments back. A robot cuts comments that are too long, so report any that differ.
+        const sentItems = plan.send.slice(0, sent);
+        const after = await readRobotComments(client, undefined, ipAddress);
+        const different = sentItems.filter(item => after.get(item.key) !== item.text);
+        for (const item of different) {
+            outputChannel.appendLine(`Check: ${item.key} on the robot is "${after.get(item.key) ?? ''}", not "${item.text}" (too long for the robot's comment field?).`);
+        }
+        if (different.length > 0) {
+            vscode.window.showWarningMessage(`Sent ${sent} description(s) to ${robotLabel}, but ${different.length} read back differently (${different.slice(0, 5).map(item => item.key).join(', ')}). See the Output panel.`);
+        } else if (!failure) {
+            vscode.window.showInformationMessage(`Sent ${sent} description(s) to ${robotLabel} and checked them.`);
+        }
+    });
 }
 
 /**

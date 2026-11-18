@@ -27,6 +27,7 @@ function isValidPort(port) {
 /**
  * Keeps robots with a name and a valid IP. `folder` is optional (relative to the workspace folder).
  * `port` is optional; missing or null means "use the robotFtp.port setting".
+ * `httpPort` is optional (web server port for Send Descriptions; missing means 80).
  * Returns { robots, problems } so the caller can report skipped entries.
  */
 function cleanRobots(list) {
@@ -68,6 +69,11 @@ function cleanRobots(list) {
             robot.port = entry.port;
         } else if (entry.port !== undefined && entry.port !== null) {
             problems.push(`${where} (${name}) has an invalid port; using the Port setting.`);
+        }
+        if (isValidPort(entry.httpPort)) {
+            robot.httpPort = entry.httpPort;
+        } else if (entry.httpPort !== undefined && entry.httpPort !== null) {
+            problems.push(`${where} (${name}) has an invalid httpPort; using 80.`);
         }
         robots.push(robot);
     });
@@ -126,6 +132,9 @@ function saveProjectRobot(workspaceRoot, robot) {
     if (index >= 0) {
         if (robots[index].descriptions) {
             entry.descriptions = robots[index].descriptions;
+        }
+        if (robots[index].httpPort) {
+            entry.httpPort = robots[index].httpPort;
         }
         robots[index] = entry;
     } else {
