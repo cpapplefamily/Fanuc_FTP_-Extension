@@ -6,6 +6,18 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.11.1-dev] - 2026-11-18
+
+- Update descriptions while writing an LS program:
+  - Inline comments such as `DO[5:Clamp Closed]` that differ from the descriptions files are marked, with a quick fix to save them. Comments the robot cut short in downloaded files (12 or more characters that start the description) are not marked. This is the LS Verifier's new `descriptions` rule (rules version 5, added to existing rules files automatically): a **warning** by default, checked live while editing. Turn it off with `enabled: false` in `ls-verifier-rules.json`.
+  - **Send This LS File** / **Send Folder** list LS comments that differ from the descriptions before connecting: **Save and Send to Robot** (saves them, uploads, then sends the changed descriptions without asking again), **Send Without Saving**, or Cancel.
+  - `Ctrl+.` on any key (`DO[5]`, `R[10]`) → **Set description of …**; the description hover has an **Edit description** link.
+  - **Update Descriptions from LS Comments** (editor right-click, and MNAutomation → Descriptions) saves all differing comments in a file after you pick them.
+  - Saves change only that row in the CSV, then offer **Send to Robot**.
+- After **Send This LS File** / **Send Folder**, the robot's comments are compared with the project's descriptions in the same connection. If some differ, a popup offers **Send Descriptions**, **Not This Session** or **Don't Ask Again** (for all robots; **Reset Reminders** turns it back on).
+- Fixed: the Explorer's progress bar kept running after a command when its last notification (for example **Send to Robot** after saving a description, the Git commit question, or the reminder after an upload) timed out without an answer. Commands now finish when their work is done, and those questions stay in the notification center. After a download, the commit is no longer held back by the create-descriptions question; a descriptions file created later is offered for its own commit.
+- Typing `:` adds the line-ending `;` only at the start of a line (`:` or `  12:`), not inside `DO[7:` or `R[10:` comments.
+
 ## [0.11.0-dev] - 2026-11-18
 
 - New **MNAutomation → Descriptions → Send Descriptions to Robot**: sends the robot's descriptions (and `shared.csv`) to the robot as I/O and register comments. Reads the robot's comments first and sends only the rows that differ, after a confirmation that lists them; then reads them back to check. Uses the controller's built-in `ComSet` web program (no KAREL option needed; KAREL must be unlocked under Setup → Host Comm → HTTP). `UI`/`UO` are skipped.

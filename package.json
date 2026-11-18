@@ -3,7 +3,7 @@
   "displayName": "Robot FTP",
   "description": "VSCODE extension to FTP *.ls file to Fanuc Robot",
   "publisher": "CoreyApplegate",
-  "version": "0.11.0-dev",
+  "version": "0.11.1-dev",
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -159,6 +159,14 @@
       {
         "command": "extension.sendDescriptionsToRobot",
         "title": "Send Descriptions to Robot"
+      },
+      {
+        "command": "extension.setDescription",
+        "title": "Robot FTP: Set Description of I/O or Register at Cursor"
+      },
+      {
+        "command": "extension.updateDescriptionsFromLsFile",
+        "title": "Update Descriptions from LS Comments"
       }
     ],
     "keybindings": [
@@ -222,6 +230,11 @@
         {
           "command": "extension.listLsFilesAndInsert",
           "group": "fanucHelpers"
+        },
+        {
+          "command": "extension.updateDescriptionsFromLsFile",
+          "when": "editorLangId == fanuctp",
+          "group": "fanucHelpers"
         }
       ],
       "explorer/context": [
@@ -280,6 +293,11 @@
         {
           "command": "extension.editDescriptions",
           "group": "2_edit@1"
+        },
+        {
+          "command": "extension.updateDescriptionsFromLsFile",
+          "when": "resourceExtname =~ /\\.ls$/i",
+          "group": "2_edit@2"
         },
         {
           "command": "extension.sendDescriptionsToRobot",

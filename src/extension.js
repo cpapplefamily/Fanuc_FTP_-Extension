@@ -11,12 +11,14 @@ const {
 } = require('./robotIps');
 const {
     parseDescriptionsCsv, mergeDescriptions, findDescriptionKeys,
+    findInlineComments, inlineCommentMatches, setDescriptionInCsv,
     getSharedDescriptionsPath, getRobotDescriptionsPath, ensureDescriptionsFile
 } = require('./descriptions');
 const {
     BACKUP_FILES, findBackupFiles, readBackupDescriptions, compareDescriptions, combineDescriptions, serializeDescriptionsCsv
 } = require('./backupDescriptions');
 const { planDescriptionPush, sendComment } = require('./pushDescriptions');
+const { registerLineEndAutoClose } = require('./lineEndAutoClose');
 const { DEFAULT_FOLDERS, DEFAULT_SYSTEM_PROGRAMS, sortDownloadedFiles, listFilesRecursive, planRestoreFolder } = require('./backupSort');
 const { DEFAULT_TEMPLATE, DEFAULT_IGNORE_PATTERNS, mergeGitignore, offerCommit, initChoicesFor } = require('./gitIntegration');
 const {
@@ -192,7 +194,8 @@ function createExternalSnippetCompletionProvider() {
 async function activate(context) {
     extensionContext = context;
     outputChannel.show();
-    lsVerifier = registerLsVerifier(vscode, context, outputChannel);
+    lsVerifier = registerLsVerifier(vscode, context, outputChannel, { descriptionsFor: descriptionTextsFor });
+    registerLineEndAutoClose(vscode, context);
     context.subscriptions.push(vscode.commands.registerCommand(
         'extension.renameLsFile', createRenameLsCommand(vscode, outputChannel)
     ));
@@ -478,14 +481,244 @@ function descriptionSourcesFor(uri) {
     };
 }
 
+/** Merged shared + robot descriptions for the sources (Map key → { text, source }). */
+function readMergedDescriptions(sources) {
+    return sources
+        ? mergeDescriptions(readDescriptionsFile(sources.sharedPath), sources.robotPath ? readDescriptionsFile(sources.robotPath) : undefined)
+        : new Map();
+}
+
+/** Description texts (Map key → text) for an LS file, for the LS Verifier's "descriptions" check. */
+function descriptionTextsFor(uri) {
+    const merged = readMergedDescriptions(descriptionSourcesFor(uri));
+    return new Map([...merged].map(([key, entry]) => [key, entry.text]));
+}
+
+/** LS Verifier diagnostics from the "descriptions" check: their range covers exactly one inline comment such as DO[5:Clamp]. */
+function inlineCommentForDiagnostic(document, diagnostic) {
+    if (diagnostic.source !== 'LS Verifier' || diagnostic.range.start.line !== diagnostic.range.end.line) {
+        return undefined;
+    }
+    return findInlineComments(document.lineAt(diagnostic.range.start.line).text)
+        .find(found => found.start === diagnostic.range.start.character && found.end === diagnostic.range.end.character);
+}
+
+/** The file a key's description is saved to: the file it comes from now, else the robot's file, else shared.csv. */
+function descriptionTargetFile(sources, descriptions, key) {
+    if (descriptions.get(key)?.source === 'shared' || !sources.robotPath) {
+        return sources.sharedPath;
+    }
+    return sources.robotPath;
+}
+
+/**
+ * Saves descriptions ([{ key, text }]) for an LS document, each to its target file. Returns the files written,
+ * or undefined when nothing was saved. A descriptions file open with unsaved changes is not overwritten.
+ */
+function saveDescriptions(sources, changes) {
+    const descriptions = readMergedDescriptions(sources);
+    const byFile = new Map();
+    for (const change of changes) {
+        const filePath = descriptionTargetFile(sources, descriptions, change.key);
+        byFile.set(filePath, [...(byFile.get(filePath) || []), change]);
+    }
+    const relative = filePath => path.relative(sources.workspaceRoot, filePath).split(path.sep).join('/');
+    for (const filePath of byFile.keys()) {
+        const open = vscode.workspace.textDocuments.find(document => document.uri.fsPath.toLowerCase() === filePath.toLowerCase());
+        if (open?.isDirty) {
+            vscode.window.showErrorMessage(`Save or undo your changes in ${relative(filePath)} first; the descriptions were not saved.`);
+            return undefined;
+        }
+    }
+    for (const [filePath, fileChanges] of byFile) {
+        ensureDescriptionsFile(filePath);
+        let text = fs.readFileSync(filePath, 'utf8');
+        for (const change of fileChanges) {
+            text = setDescriptionInCsv(text, change.key, change.text);
+            outputChannel.appendLine(`Description ${change.key} = "${change.text}" saved to ${filePath}`);
+        }
+        fs.writeFileSync(filePath, text, 'utf8');
+        descriptionFileCache.delete(filePath);
+    }
+    updateAllDescriptionDecorations();
+    return [...byFile.keys()].map(relative);
+}
+
+/**
+ * Runs a follow-up (usually a notification with buttons) without making the command wait for it. A notification that
+ * times out into the notification center never resolves, and a command started from the Explorer keeps the
+ * Explorer's progress bar running until it finishes.
+ */
+function inBackground(label, task) {
+    Promise.resolve().then(task).catch(error => outputChannel.appendLine(`${label}: ${error.message}`));
+}
+
+/** Tells the user what was saved, with a button to send it to the robot. Does not wait for the answer. */
+function reportSavedDescriptions(documentUri, summary, files) {
+    inBackground('Send descriptions', async () => {
+        const send = 'Send to Robot';
+        const choice = await vscode.window.showInformationMessage(`${summary} Saved to ${files.join(' and ')}.`, send);
+        if (choice === send) {
+            await sendDescriptionsToRobot(vscode.Uri.file(path.dirname(documentUri.fsPath)));
+        }
+    });
+}
+
+/** The description key (bare DO[5] or inline DO[5:Clamp]) under a position, with its inline comment if any. */
+function descriptionKeyAt(document, position) {
+    const lineText = document.lineAt(position.line).text;
+    const inline = findInlineComments(lineText).find(found => found.start <= position.character && position.character <= found.end);
+    if (inline) {
+        return inline;
+    }
+    return findDescriptionKeys(lineText).find(found => found.start <= position.character && position.character <= found.end + 1);
+}
+
+/**
+ * Sets one description. uri/key come from a quick fix or hover link; from the Command Palette the key under
+ * the cursor is used. Without text, asks for it.
+ */
+async function setDescription(uriArg, key, text) {
+    const editor = vscode.window.activeTextEditor;
+    const uri = typeof uriArg === 'string' ? vscode.Uri.parse(uriArg) : (uriArg instanceof vscode.Uri ? uriArg : editor?.document.uri);
+    if (!uri) {
+        vscode.window.showErrorMessage('Open an LS file and put the cursor on an I/O or register, for example DO[5].');
+        return;
+    }
+    if (!key && editor && editor.document.uri.toString() === uri.toString()) {
+        key = descriptionKeyAt(editor.document, editor.selection.active)?.key;
+    }
+    if (!key) {
+        vscode.window.showErrorMessage('Put the cursor on an I/O or register, for example DO[5] or R[10], to set its description.');
+        return;
+    }
+    const sources = descriptionSourcesFor(uri);
+    if (!sources) {
+        vscode.window.showErrorMessage('Open the job folder first. Descriptions are saved in its .vscode/descriptions folder.');
+        return;
+    }
+    const descriptions = readMergedDescriptions(sources);
+    if (text === undefined) {
+        const target = path.relative(sources.workspaceRoot, descriptionTargetFile(sources, descriptions, key)).split(path.sep).join('/');
+        text = await vscode.window.showInputBox({
+            title: `Description for ${key}`,
+            prompt: `Saved to ${target}`,
+            value: descriptions.get(key)?.text || '',
+            validateInput: value => value.trim() ? null : 'Enter a description.'
+        });
+        if (text === undefined) {
+            return;
+        }
+    }
+    text = text.trim();
+    if (descriptions.get(key)?.text === text) {
+        return;
+    }
+    const files = saveDescriptions(sources, [{ key, text }]);
+    if (files) {
+        reportSavedDescriptions(uri, `${key}: "${text}".`, files);
+    }
+}
+
+/**
+ * Inline comments in LS text that differ from the descriptions (Map key → { text, source }).
+ * One change per key: the first comment in the file wins, and keys with conflicting comments are listed in conflicts.
+ * Returns { changes: Map key → { key, text, current, line }, conflicts: Set of keys }.
+ */
+function lsCommentChanges(text, descriptions) {
+    const changes = new Map();
+    const conflicts = new Set();
+    text.split(/\r?\n/).forEach((lineText, line) => {
+        for (const found of findInlineComments(lineText)) {
+            const entry = descriptions.get(found.key);
+            if (entry && inlineCommentMatches(found.text, entry.text)) {
+                continue;
+            }
+            const existing = changes.get(found.key);
+            if (!existing) {
+                changes.set(found.key, { key: found.key, text: found.text, current: entry?.text, line });
+            } else if (existing.text !== found.text) {
+                conflicts.add(found.key);
+            }
+        }
+    });
+    return { changes, conflicts };
+}
+
+/** Saves every inline comment in an LS file that differs from the descriptions, after the user picks which. */
+async function updateDescriptionsFromLsFile(uriArg) {
+    const uri = uriArg instanceof vscode.Uri ? uriArg : vscode.window.activeTextEditor?.document.uri;
+    if (!uri || !/\.ls$/i.test(uri.fsPath)) {
+        vscode.window.showErrorMessage('Open or right-click an LS file to update descriptions from its comments.');
+        return;
+    }
+    const sources = descriptionSourcesFor(uri);
+    if (!sources) {
+        vscode.window.showErrorMessage('Open the job folder first. Descriptions are saved in its .vscode/descriptions folder.');
+        return;
+    }
+    const document = await vscode.workspace.openTextDocument(uri);
+    const { changes, conflicts } = lsCommentChanges(document.getText(), readMergedDescriptions(sources));
+    if (changes.size === 0) {
+        vscode.window.showInformationMessage(`Every comment in ${path.basename(uri.fsPath)} already matches the descriptions.`);
+        return;
+    }
+    const items = [...changes.values()].map(change => ({
+        label: change.key,
+        description: `${change.current === undefined ? '(none)' : `"${change.current}"`} → "${change.text}"`,
+        detail: conflicts.has(change.key) ? `Line ${change.line + 1}; other lines give ${change.key} a different comment` : `Line ${change.line + 1}`,
+        picked: true,
+        change
+    }));
+    const picked = await vscode.window.showQuickPick(items, {
+        canPickMany: true,
+        placeHolder: `Save ${items.length} comment(s) from ${path.basename(uri.fsPath)} as descriptions`
+    });
+    if (!picked || picked.length === 0) {
+        return;
+    }
+    const files = saveDescriptions(sources, picked.map(item => item.change));
+    if (files) {
+        reportSavedDescriptions(uri, `Saved ${picked.length} description(s) from ${path.basename(uri.fsPath)}.`, files);
+    }
+}
+
+/** Lightbulb actions in LS files: save a differing inline comment, or set the description of the key under the cursor. */
+class DescriptionCodeActionProvider {
+    provideCodeActions(document, range, context) {
+        const actions = [];
+        const ours = context.diagnostics.filter(diagnostic => inlineCommentForDiagnostic(document, diagnostic));
+        for (const diagnostic of ours) {
+            const found = inlineCommentForDiagnostic(document, diagnostic);
+            const action = new vscode.CodeAction(`Save "${found.text}" as the description of ${found.key}`, vscode.CodeActionKind.QuickFix);
+            action.command = { command: 'extension.setDescription', title: action.title, arguments: [document.uri, found.key, found.text] };
+            action.diagnostics = [diagnostic];
+            action.isPreferred = true;
+            actions.push(action);
+        }
+        const allDiagnostics = vscode.languages.getDiagnostics(document.uri).filter(diagnostic => inlineCommentForDiagnostic(document, diagnostic));
+        if (ours.length > 0 && allDiagnostics.length > 1) {
+            const action = new vscode.CodeAction(`Save all ${allDiagnostics.length} differing comments in this file as descriptions…`, vscode.CodeActionKind.QuickFix);
+            action.command = { command: 'extension.updateDescriptionsFromLsFile', title: action.title, arguments: [document.uri] };
+            actions.push(action);
+        }
+        const atCursor = descriptionKeyAt(document, range.start);
+        if (atCursor) {
+            const action = new vscode.CodeAction(`Set description of ${atCursor.key}…`, vscode.CodeActionKind.RefactorRewrite);
+            action.command = { command: 'extension.setDescription', title: action.title, arguments: [document.uri, atCursor.key] };
+            actions.push(action);
+        }
+        return actions;
+    }
+}
+
 function updateDescriptionDecorations(editor) {
     if (!editor || editor.document.languageId !== 'fanuctp') {
         return;
     }
     const sources = descriptionSourcesFor(editor.document.uri);
-    const descriptions = sources
-        ? mergeDescriptions(readDescriptionsFile(sources.sharedPath), sources.robotPath ? readDescriptionsFile(sources.robotPath) : undefined)
-        : new Map();
+    const descriptions = readMergedDescriptions(sources);
+    lsVerifier?.updateDescriptionIssues(editor.document);
 
     const robotDecorations = [];
     const sharedDecorations = [];
@@ -502,10 +735,15 @@ function updateDescriptionDecorations(editor) {
                 const sourceText = isShared
                     ? `shared (${relative(sources.sharedPath)})`
                     : `${sources.robot.name} (${relative(sources.robotPath)})`;
+                const editArgs = encodeURIComponent(JSON.stringify([editor.document.uri.toString(), found.key]));
+                const hover = new vscode.MarkdownString(
+                    `**${found.key}** ${entry.text}\n\nFrom ${sourceText} · [Edit description](command:extension.setDescription?${editArgs})`
+                );
+                hover.isTrusted = { enabledCommands: ['extension.setDescription'] };
                 const decoration = {
                     range: new vscode.Range(line, found.start, line, found.end),
                     renderOptions: { after: { contentText: ` ${entry.text}` } },
-                    hoverMessage: new vscode.MarkdownString(`**${found.key}** ${entry.text}\n\nFrom ${sourceText}`)
+                    hoverMessage: hover
                 };
                 (isShared ? sharedDecorations : robotDecorations).push(decoration);
             }
@@ -563,7 +801,13 @@ function registerDescriptionHints(context) {
         vscode.commands.registerCommand('extension.editDescriptions', editDescriptions),
         vscode.commands.registerCommand('extension.createDescriptionsFromBackup', createDescriptionsFromBackup),
         vscode.commands.registerCommand('extension.getDescriptionsFromRobot', getDescriptionsFromRobot),
-        vscode.commands.registerCommand('extension.sendDescriptionsToRobot', sendDescriptionsToRobot),
+        // Menus pass (clicked uri, selected uris); only the uri is used, so the robot is always asked for.
+        vscode.commands.registerCommand('extension.sendDescriptionsToRobot', resourceUri => sendDescriptionsToRobot(resourceUri)),
+        vscode.commands.registerCommand('extension.setDescription', setDescription),
+        vscode.commands.registerCommand('extension.updateDescriptionsFromLsFile', updateDescriptionsFromLsFile),
+        vscode.languages.registerCodeActionsProvider('fanuctp', new DescriptionCodeActionProvider(), {
+            providedCodeActionKinds: [vscode.CodeActionKind.QuickFix, vscode.CodeActionKind.RefactorRewrite]
+        }),
         { dispose: () => clearTimeout(pending) }
     );
     updateAllDescriptionDecorations();
@@ -657,7 +901,28 @@ async function readRobotComments(client, progress, ipAddress) {
  * Sends the shared + robot descriptions to the robot as I/O and register comments.
  * Only rows that differ from the robot's current comments are sent, then the comments are read back to check them.
  */
-async function sendDescriptionsToRobot(resourceUri) {
+/**
+ * The descriptions that belong on a connected robot: the named robot's own file over shared.csv
+ * (an unnamed IP gets shared.csv only). Returns { robot, local: Map key → text, fileList, robotLabel }.
+ */
+function descriptionsForRobot(workspaceRoot, ipAddress, picked) {
+    const relative = filePath => path.relative(workspaceRoot, filePath).split(path.sep).join('/');
+    const { robots } = readIpConfig(workspaceRoot);
+    const robot = (picked.name && robots.find(candidate => candidate.name === picked.name))
+        || robots.find(candidate => candidate.ip === ipAddress && candidate.port === picked.port);
+    const sharedPath = getSharedDescriptionsPath(workspaceRoot);
+    const robotPath = robot ? getRobotDescriptionsPath(workspaceRoot, robot) : undefined;
+    const merged = mergeDescriptions(readDescriptionsFile(sharedPath), robotPath ? readDescriptionsFile(robotPath) : undefined);
+    return {
+        robot,
+        local: new Map([...merged].map(([key, entry]) => [key, entry.text])),
+        fileList: [robotPath, sharedPath].filter(Boolean).map(relative).join(' and '),
+        robotLabel: robot ? `${robot.name} (${ipAddress})` : ipAddress
+    };
+}
+
+/** knownRobot ({ ip, port, name }) connects without the robot picker, e.g. from the reminder after an upload. */
+async function sendDescriptionsToRobot(resourceUri, knownRobot) {
     let ownerPath;
     if (resourceUri && fs.existsSync(resourceUri.fsPath)) {
         ownerPath = fs.statSync(resourceUri.fsPath).isDirectory() ? resourceUri.fsPath : path.dirname(resourceUri.fsPath);
@@ -670,27 +935,17 @@ async function sendDescriptionsToRobot(resourceUri) {
     }
     const workspaceRoot = workspaceFolder.uri.fsPath;
     ownerPath = ownerPath || workspaceRoot;
-    const relative = filePath => path.relative(workspaceRoot, filePath).split(path.sep).join('/');
 
     await withRobotConnection(ownerPath, 'SendDescriptions', async (client, ipAddress, picked) => {
-        // Which files apply: the named robot's own file over shared.csv. An unnamed IP gets shared.csv only.
-        const { robots } = readIpConfig(workspaceRoot);
-        const robot = (picked.name && robots.find(candidate => candidate.name === picked.name))
-            || robots.find(candidate => candidate.ip === ipAddress && candidate.port === picked.port);
-        const sharedPath = getSharedDescriptionsPath(workspaceRoot);
-        const robotPath = robot ? getRobotDescriptionsPath(workspaceRoot, robot) : undefined;
+        const { robot, local, fileList, robotLabel } = descriptionsForRobot(workspaceRoot, ipAddress, picked);
         if (!robot) {
-            outputChannel.appendLine(`No named robot for ${ipAddress}; sending ${relative(sharedPath)} only.`);
+            outputChannel.appendLine(`No named robot for ${ipAddress}; sending ${fileList} only.`);
         }
-        const merged = mergeDescriptions(readDescriptionsFile(sharedPath), robotPath ? readDescriptionsFile(robotPath) : undefined);
-        const local = new Map([...merged].map(([key, entry]) => [key, entry.text]));
-        const fileList = [robotPath, sharedPath].filter(Boolean).map(relative).join(' and ');
         if (local.size === 0) {
             vscode.window.showWarningMessage(`No descriptions to send. ${fileList} has no rows.`);
             return;
         }
 
-        const robotLabel = robot ? `${robot.name} (${ipAddress})` : ipAddress;
         const httpPort = robot?.httpPort ?? 80;
         const plan = await vscode.window.withProgress(
             { location: vscode.ProgressLocation.Notification, title: `Reading the comments on ${robotLabel}` },
@@ -726,50 +981,138 @@ async function sendDescriptionsToRobot(resourceUri) {
             return;
         }
 
-        let sent = 0;
-        let failure;
-        await vscode.window.withProgress(
-            { location: vscode.ProgressLocation.Notification, title: `Sending descriptions to ${robotLabel}`, cancellable: true },
-            async (progress, token) => {
-                for (const item of plan.send) {
-                    if (token.isCancellationRequested) {
-                        break;
-                    }
-                    progress.report({ message: `${item.key} (${sent + 1} of ${plan.send.length})`, increment: 100 / plan.send.length });
-                    const error = await sendComment(ipAddress, httpPort, item);
-                    if (error) {
-                        failure = { item, error };
-                        break;
-                    }
-                    sent++;
-                }
-            }
-        );
-        outputChannel.appendLine(`Sent ${sent} of ${plan.send.length} description(s) to ${robotLabel}.`);
-        if (failure) {
-            outputChannel.appendLine(`ERROR sending ${failure.item.key}: ${failure.error}`);
-            const hint = robot && !robot.httpPort && httpPort === 80 && /ECONNREFUSED|No answer/.test(failure.error)
-                ? ` For RoboGuide or a port-forwarded robot, add "httpPort" to ${robot.name} in Edit Robot List.`
-                : '';
-            vscode.window.showErrorMessage(`Sent ${sent} of ${plan.send.length}. ${failure.item.key} failed: ${failure.error}${hint}`);
-            if (sent === 0) {
-                return;
-            }
-        }
+        await pushDescriptionPlan(client, ipAddress, robot, robotLabel, plan);
+    }, knownRobot);
+}
 
-        // Read the comments back. A robot cuts comments that are too long, so report any that differ.
-        const sentItems = plan.send.slice(0, sent);
-        const after = await readRobotComments(client, undefined, ipAddress);
-        const different = sentItems.filter(item => after.get(item.key) !== item.text);
-        for (const item of different) {
-            outputChannel.appendLine(`Check: ${item.key} on the robot is "${after.get(item.key) ?? ''}", not "${item.text}" (too long for the robot's comment field?).`);
+/** Sends the planned comments over HTTP, then reads them back through the open FTP connection to check them. */
+async function pushDescriptionPlan(client, ipAddress, robot, robotLabel, plan) {
+    const httpPort = robot?.httpPort ?? 80;
+    let sent = 0;
+    let failure;
+    await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `Sending descriptions to ${robotLabel}`, cancellable: true },
+        async (progress, token) => {
+            for (const item of plan.send) {
+                if (token.isCancellationRequested) {
+                    break;
+                }
+                progress.report({ message: `${item.key} (${sent + 1} of ${plan.send.length})`, increment: 100 / plan.send.length });
+                const error = await sendComment(ipAddress, httpPort, item);
+                if (error) {
+                    failure = { item, error };
+                    break;
+                }
+                sent++;
+            }
         }
-        if (different.length > 0) {
-            vscode.window.showWarningMessage(`Sent ${sent} description(s) to ${robotLabel}, but ${different.length} read back differently (${different.slice(0, 5).map(item => item.key).join(', ')}). See the Output panel.`);
-        } else if (!failure) {
-            vscode.window.showInformationMessage(`Sent ${sent} description(s) to ${robotLabel} and checked them.`);
+    );
+    outputChannel.appendLine(`Sent ${sent} of ${plan.send.length} description(s) to ${robotLabel}.`);
+    if (failure) {
+        outputChannel.appendLine(`ERROR sending ${failure.item.key}: ${failure.error}`);
+        const hint = robot && !robot.httpPort && httpPort === 80 && /ECONNREFUSED|No answer/.test(failure.error)
+            ? ` For RoboGuide or a port-forwarded robot, add "httpPort" to ${robot.name} in Edit Robot List.`
+            : '';
+        vscode.window.showErrorMessage(`Sent ${sent} of ${plan.send.length}. ${failure.item.key} failed: ${failure.error}${hint}`);
+        if (sent === 0) {
+            return;
         }
-    });
+    }
+
+    // Read the comments back. A robot cuts comments that are too long, so report any that differ.
+    const sentItems = plan.send.slice(0, sent);
+    const after = await readRobotComments(client, undefined, ipAddress);
+    const different = sentItems.filter(item => after.get(item.key) !== item.text);
+    for (const item of different) {
+        outputChannel.appendLine(`Check: ${item.key} on the robot is "${after.get(item.key) ?? ''}", not "${item.text}" (too long for the robot's comment field?).`);
+    }
+    if (different.length > 0) {
+        vscode.window.showWarningMessage(`Sent ${sent} description(s) to ${robotLabel}, but ${different.length} read back differently (${different.slice(0, 5).map(item => item.key).join(', ')}). See the Output panel.`);
+    } else if (!failure) {
+        vscode.window.showInformationMessage(`Sent ${sent} description(s) to ${robotLabel} and checked them.`);
+    }
+}
+
+// ---- Reminder after an upload: descriptions that differ from the robot's comments ----
+
+const SKIP_SEND_DESCRIPTIONS_REMINDER_KEY = 'robotFtp.skipSendDescriptionsReminder'; // workspace: "Don't Ask Again", all robots
+let sendDescriptionsReminderSnoozed = false; // "Not This Session", all robots
+
+function sendDescriptionsReminderOff() {
+    return sendDescriptionsReminderSnoozed || Boolean(extensionContext.workspaceState.get(SKIP_SEND_DESCRIPTIONS_REMINDER_KEY));
+}
+
+/**
+ * Called while still connected after an upload. Compares the descriptions with the robot's comments and returns
+ * { robotLabel, count, fileList } when some differ, else undefined. Never throws: a failed check only logs.
+ */
+async function checkDescriptionsAfterUpload(client, directoryPath, ipAddress, picked) {
+    try {
+        if (sendDescriptionsReminderOff()) {
+            return undefined;
+        }
+        const workspaceRoot = getWorkspaceRoot(directoryPath);
+        if (!workspaceRoot) {
+            return undefined;
+        }
+        const { local, fileList, robotLabel } = descriptionsForRobot(workspaceRoot, ipAddress, picked);
+        if (local.size === 0) {
+            return undefined; // No descriptions in this project: nothing to compare.
+        }
+        const plan = planDescriptionPush(local, await readRobotComments(client, undefined, ipAddress));
+        outputChannel.appendLine(`Descriptions check after upload: ${plan.send.length} of ${local.size} differ from the comments on ${robotLabel}.`);
+        return plan.send.length > 0 ? { robotLabel, count: plan.send.length, fileList } : undefined;
+    } catch (error) {
+        outputChannel.appendLine(`Descriptions check after upload skipped: ${error.message}`);
+        return undefined;
+    }
+}
+
+/**
+ * Called while still connected after an upload when the user already chose to save LS comments and send them:
+ * sends every description that differs from the robot's comments, without asking again. Never throws.
+ */
+async function sendDescriptionsAfterUpload(client, directoryPath, ipAddress, picked) {
+    try {
+        const workspaceRoot = getWorkspaceRoot(directoryPath);
+        if (!workspaceRoot) {
+            return;
+        }
+        const { robot, local, robotLabel } = descriptionsForRobot(workspaceRoot, ipAddress, picked);
+        const plan = planDescriptionPush(local, await readRobotComments(client, undefined, ipAddress));
+        if (plan.unsupported.length > 0) {
+            outputChannel.appendLine(`Not sent (the robot's web comment tool cannot set these types): ${plan.unsupported.join(', ')}`);
+        }
+        if (plan.send.length === 0) {
+            outputChannel.appendLine(`${robotLabel} already has all ${plan.unchanged} description(s).`);
+            return;
+        }
+        plan.send.forEach(item => outputChannel.appendLine(`  Sending ${item.key}: ${item.current === undefined ? '(none)' : `"${item.current}"`} → "${item.text}"`));
+        await pushDescriptionPlan(client, ipAddress, robot, robotLabel, plan);
+    } catch (error) {
+        outputChannel.appendLine(`Sending descriptions after upload failed: ${error.message}`);
+        vscode.window.showErrorMessage(`The files were sent, but the descriptions were not: ${error.message}`);
+    }
+}
+
+/** Asks to send descriptions that differ from the robot: Send Descriptions, Not This Session, or Don't Ask Again. */
+async function offerToSendDescriptions(reminder, directoryPath, knownRobot) {
+    const send = 'Send Descriptions';
+    const notNow = 'Not This Session';
+    const never = "Don't Ask Again";
+    const choice = await vscode.window.showWarningMessage(
+        `${reminder.count} description(s) in ${reminder.fileList} differ from the comments on ${reminder.robotLabel}. Send them to the robot?`,
+        send, notNow, never
+    );
+    if (choice === send) {
+        await sendDescriptionsToRobot(vscode.Uri.file(directoryPath), knownRobot);
+    } else if (choice === notNow) {
+        sendDescriptionsReminderSnoozed = true;
+        outputChannel.appendLine('Will not ask to send descriptions after an upload again this session (any robot).');
+    } else if (choice === never) {
+        await extensionContext.workspaceState.update(SKIP_SEND_DESCRIPTIONS_REMINDER_KEY, true);
+        outputChannel.appendLine('Will not ask to send descriptions after an upload again (any robot, this workspace). Turn it back on with MNAutomation → Reset Reminders.');
+    }
 }
 
 /**
@@ -989,16 +1332,17 @@ function trackTransferProgress(client, progress, totalBytes, actionLabel) {
  * @param {string} directoryPath - Directory to use for IP retrieval
  * @param {string} operationName - Name of operation for logging
  * @param {Function} callback - Async function that receives (client, ipAddress, robot) and performs FTP operations
+ * @param {{ip: string, port: (number|undefined), name: (string|undefined)}} [knownRobot] - connect to this robot without asking
  * @returns {Promise<void>}
  */
-async function withRobotConnection(directoryPath, operationName, callback) {
+async function withRobotConnection(directoryPath, operationName, callback, knownRobot) {
     let ipAddress;
     const client = new ftp.Client();
     const CONNECTION_TIMEOUT = 10000; // 10 seconds timeout
     
     try {
-        // Get robot IP address
-        const robot = await getRobotIp(directoryPath);
+        // Get robot IP address (knownRobot { ip, port, name } skips the picker)
+        const robot = typeof knownRobot?.ip === 'string' ? knownRobot : await getRobotIp(directoryPath);
         ipAddress = robot.ip;
 
         // Connect to robot with timeout. A robot's own port wins over the Port setting.
@@ -1054,7 +1398,8 @@ async function withRobotConnection(directoryPath, operationName, callback) {
 }
 
 /**
- * Runs the LS verifier on every file before an upload. Returns true to go ahead with the upload.
+ * Runs the LS verifier on every file before an upload. Returns false to cancel, true to upload, or 'sendDescriptions'
+ * to upload and then send the descriptions (see checkLsCommentsBeforeUpload).
  * Errors ask "Send with Errors" or cancel; warnings alone do not stop the upload.
  */
 async function checkLsFilesBeforeUpload(uris) {
@@ -1081,6 +1426,11 @@ async function checkLsFilesBeforeUpload(uris) {
         outputChannel.appendLine('LS check before upload skipped: no verifier rules are enabled.');
         return true;
     }
+
+    // Comments that differ from the descriptions get their own question below (unless made critical in the rules).
+    const isDescriptionIssue = issue => issue.code === check.descriptionsRuleId && issue.severity !== 'critical';
+    const descriptionFiles = check.results.filter(result => result.issues.some(isDescriptionIssue)).map(result => result.uri);
+    check.results = check.results.map(result => ({ ...result, issues: result.issues.filter(issue => !isDescriptionIssue(issue)) }));
 
     const severityOf = issue => issue.severity || 'error';
     const count = (issues, severity) => issues.filter(issue => severityOf(issue) === severity).length;
@@ -1120,7 +1470,7 @@ async function checkLsFilesBeforeUpload(uris) {
         if (warningCount > 0) {
             vscode.window.showInformationMessage(`LS check passed with ${warningCount} warning(s); uploading. See the Problems panel for details.`);
         }
-        return true;
+        return checkLsCommentsBeforeUpload(descriptionFiles);
     }
 
     const send = 'Send with Errors';
@@ -1135,12 +1485,70 @@ async function checkLsFilesBeforeUpload(uris) {
     );
     if (choice === send) {
         outputChannel.appendLine(`Sending ${withErrors.length} file(s) with LS errors at the user's request.`);
-        return true;
+        return checkLsCommentsBeforeUpload(descriptionFiles);
     }
     if (choice === showProblems) {
         await vscode.commands.executeCommand('workbench.actions.view.problems');
     }
     return false;
+}
+
+/**
+ * Before an upload: inline comments in the LS files (DO[5:Clamp]) that differ from the descriptions. The robot
+ * ignores those comments, so offer to save them as descriptions first. Returns false to cancel, true to upload, or
+ * 'sendDescriptions' to upload and then send the descriptions.
+ */
+async function checkLsCommentsBeforeUpload(uris) {
+    const found = [];
+    for (const uri of uris) {
+        const sources = descriptionSourcesFor(uri);
+        if (!sources) {
+            continue;
+        }
+        const text = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
+        const { changes, conflicts } = lsCommentChanges(text, readMergedDescriptions(sources));
+        if (changes.size > 0) {
+            found.push({ uri, sources, changes: [...changes.values()], conflicts });
+        }
+    }
+    if (found.length === 0) {
+        return true;
+    }
+
+    const total = found.reduce((sum, item) => sum + item.changes.length, 0);
+    const lines = found.flatMap(item => item.changes.map(change =>
+        `${path.basename(item.uri.fsPath)}: ${change.key} "${change.text}" (description: ${change.current === undefined ? 'none' : `"${change.current}"`})`
+        + (item.conflicts.has(change.key) ? ', other lines differ' : '')));
+    const shown = lines.slice(0, 12).join('\n') + (lines.length > 12 ? `\n…and ${lines.length - 12} more` : '');
+    outputChannel.appendLine(`LS comments that differ from the descriptions:\n${lines.join('\n')}`);
+
+    const save = 'Save and Send to Robot';
+    const sendOnly = 'Send Without Saving';
+    const choice = await vscode.window.showWarningMessage(
+        `${total} comment(s) in the LS file(s) differ from the descriptions.`,
+        {
+            modal: true,
+            detail: `${shown}\n\nThe robot ignores comments typed in LS files. Save and Send to Robot saves them to the descriptions, sends the LS file(s), then sends the changed descriptions to the robot.`
+        },
+        save, sendOnly
+    );
+    if (choice === sendOnly) {
+        outputChannel.appendLine('Sending without saving the differing LS comments as descriptions.');
+        return true;
+    }
+    if (choice !== save) {
+        return false;
+    }
+    const saved = new Set();
+    for (const item of found) {
+        const files = saveDescriptions(item.sources, item.changes);
+        if (!files) {
+            return false; // A descriptions file has unsaved edits; saveDescriptions already said so.
+        }
+        files.forEach(file => saved.add(file));
+    }
+    outputChannel.appendLine(`Saved ${total} description(s) to ${[...saved].join(' and ')}; they are sent to the robot after the upload.`);
+    return 'sendDescriptions';
 }
 
 /**
@@ -1155,6 +1563,8 @@ async function f_uploadToRobot(uri, isFolder) {
     const directoryPath = isFolder ? uri.fsPath : path.dirname(uri.fsPath);
     const selectedPath = uri.fsPath;
     let transfer;
+    let descriptionsReminder;
+    let uploadRobot;
 
     // Check every LS file before connecting; stop here if the user cancels.
     let lsUris;
@@ -1166,7 +1576,8 @@ async function f_uploadToRobot(uri, isFolder) {
     } else {
         lsUris = /\.ls$/i.test(selectedPath) ? [uri] : [];
     }
-    if (!await checkLsFilesBeforeUpload(lsUris)) {
+    const lsCheck = await checkLsFilesBeforeUpload(lsUris);
+    if (!lsCheck) {
         outputChannel.appendLine('Upload cancelled after the LS check.');
         return;
     }
@@ -1225,12 +1636,25 @@ async function f_uploadToRobot(uri, isFolder) {
                 
                 vscode.window.showInformationMessage(`File(s) uploaded successfully to ${ipAddress}`);
                 transfer = { kind: 'upload', operation: 'Upload', files: sentFiles, folder: directoryPath, robotName: robot.name, ip: ipAddress };
+                // While still connected: send the descriptions the user chose to save, or check whether they differ.
+                uploadRobot = { ip: ipAddress, port: robot.port, name: robot.name };
+                if (lsCheck === 'sendDescriptions') {
+                    progress.report({ message: 'Sending descriptions' });
+                    await sendDescriptionsAfterUpload(client, directoryPath, ipAddress, robot);
+                } else {
+                    progress.report({ message: 'Checking descriptions' });
+                    descriptionsReminder = await checkDescriptionsAfterUpload(client, directoryPath, ipAddress, robot);
+                }
             });
         }
     );
 
+    // Follow-up questions run on their own so the command ends now, even if a notification is ignored.
     if (transfer) {
-        await commitTransfer(transfer);
+        inBackground('Git', () => commitTransfer(transfer));
+    }
+    if (descriptionsReminder) {
+        inBackground('Descriptions reminder', () => offerToSendDescriptions(descriptionsReminder, directoryPath, uploadRobot));
     }
 }
 
@@ -1335,14 +1759,18 @@ async function f_downloadFromRobot(destinationUri, isFolder, fileType, saveType)
         }
     );
 
-    if (missingDescriptions) {
-        const descriptionsFile = await offerToCreateDescriptions(missingDescriptions, destinationPath);
-        if (descriptionsFile && transfer) {
-            transfer.files.push(descriptionsFile);
-        }
-    }
+    // Follow-up questions run on their own so the command ends now, even if a notification is ignored.
+    // The download is offered for commit right away; a descriptions file created later is offered on its own.
     if (transfer) {
-        await commitTransfer(transfer);
+        inBackground('Git', () => commitTransfer(transfer));
+    }
+    if (missingDescriptions) {
+        inBackground('Create descriptions', async () => {
+            const descriptionsFile = await offerToCreateDescriptions(missingDescriptions, destinationPath);
+            if (descriptionsFile && transfer) {
+                await commitTransfer({ ...transfer, operation: `Create descriptions for ${transfer.robotName || transfer.ip}`, files: [descriptionsFile] });
+            }
+        });
     }
 }
 
@@ -1389,13 +1817,15 @@ async function makeRestoreFolder(resourceUri) {
         );
         outputChannel.appendLine(`Restore folder: copied ${copies.length} file(s) from ${source} to ${target}${duplicates.length ? `; skipped duplicates: ${duplicates.join(', ')}` : ''}`);
         const reveal = 'Show in File Explorer';
-        const choice = await vscode.window.showInformationMessage(
-            `Made restore folder ${path.basename(target)} with ${copies.length} file(s), all in one folder. Copy its contents to a USB stick or memory card to restore the controller.`,
-            reveal
-        );
-        if (choice === reveal) {
-            await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(target));
-        }
+        inBackground('Restore folder', async () => {
+            const choice = await vscode.window.showInformationMessage(
+                `Made restore folder ${path.basename(target)} with ${copies.length} file(s), all in one folder. Copy its contents to a USB stick or memory card to restore the controller.`,
+                reveal
+            );
+            if (choice === reveal) {
+                await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(target));
+            }
+        });
     } catch (error) {
         vscode.window.showErrorMessage(`Could not make the restore folder: ${error.message}`);
     }
@@ -1411,12 +1841,17 @@ async function resetReminders() {
     if (skippedRobots.length > 0) {
         turnedOff.push(`the question to create descriptions for ${skippedRobots.join(', ')} (this workspace)`);
     }
+    if (sendDescriptionsReminderOff()) {
+        turnedOff.push('the reminder to send changed descriptions after an upload');
+    }
     if (turnedOff.length === 0) {
         vscode.window.showInformationMessage('No Robot FTP reminders are turned off.');
         return;
     }
     await extensionContext.globalState.update(GIT_UNAVAILABLE_DONT_REMIND_KEY, undefined);
     await extensionContext.workspaceState.update(SKIP_DESCRIPTIONS_PROMPT_KEY, undefined);
+    await extensionContext.workspaceState.update(SKIP_SEND_DESCRIPTIONS_REMINDER_KEY, undefined);
+    sendDescriptionsReminderSnoozed = false;
     gitUnavailableWarned = false;
     outputChannel.appendLine(`Reminders turned back on: ${turnedOff.join('; ')}`);
     vscode.window.showInformationMessage(`Turned back on: ${turnedOff.join('; ')}.`);
@@ -1571,7 +2006,7 @@ async function f_updateFilesFromRobot(fileType, resourceUri) {
     );
 
     if (transfer) {
-        await commitTransfer(transfer);
+        inBackground('Git', () => commitTransfer(transfer));
     }
 }
 
@@ -1639,7 +2074,7 @@ async function f_updateSelectedFileFromRobot(uri, fileType) {
     );
 
     if (transfer) {
-        await commitTransfer(transfer);
+        inBackground('Git', () => commitTransfer(transfer));
     }
 }
 

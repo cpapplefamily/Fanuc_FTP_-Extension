@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "rules": [
     {
       "id": "mn-colon",
@@ -81,6 +81,13 @@
       "check": "calls",
       "severity": "warning",
       "message": "LS calls:"
+    },
+    {
+      "id": "descriptions",
+      "enabled": true,
+      "check": "descriptions",
+      "severity": "warning",
+      "message": "LS descriptions:"
     }
   ]
 }
