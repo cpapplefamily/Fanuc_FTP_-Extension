@@ -6,6 +6,8 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Integration tests (`test/integration/`, run by `npm test`) in a fixture workspace: the context-menu Send Descriptions asks for the robot, LS comment diagnostics, Set Description and Update Descriptions finish when their notification is ignored, the comment check before Send This LS File, and `:` / `;` auto-close. `npm run test:unit` runs only the unit tests.
+
 ## [0.11.1-dev] - 2026-11-18
 
 - Update descriptions while writing an LS program:
