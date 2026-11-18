@@ -42,7 +42,7 @@ Long `--eg:` remarks exported from the robot wrap at about 80 characters. Each c
 
 Choose **MNAutomation → LS Checker → Edit LS Verifier Rules** to open your `ls-verifier-rules.json`. It is created on first use in the extension's user storage and shared across workspaces in the current VS Code profile. Rules are read on each verification, including unsaved edits; save the file to persist changes. Invalid rule files report an error instead of silently using defaults.
 
-The JSON contains `version: 4` and a `rules` array. Each rule has a unique `id`, an `enabled` boolean, a `check`, a `message`, and an optional `severity` (`critical`, `error` or `warning`, see [Severity levels](#severity-levels)). Literal `startsWith` / `endsWith` checks also require `section: "MN"` and a literal `value`. The template is in `src/lsVerifierRules.json`. Older files (version 1 to 3) are upgraded once, the next time the rules are used: your rules, messages, severities and disabled settings are preserved, and missing checks are added. Version 3 adds `jumpTargets`, which was part of `labels` before; it starts with the same `enabled` and `severity` as your `labels` rule. Version 4 adds `extraColon`. Save pending rules edits before upgrading.
+The JSON contains `version: 5` and a `rules` array. Each rule has a unique `id`, an `enabled` boolean, a `check`, a `message`, and an optional `severity` (`critical`, `error` or `warning`, see [Severity levels](#severity-levels)). Literal `startsWith` / `endsWith` checks also require `section: "MN"` and a literal `value`. The template is in `src/lsVerifierRules.json`. Older files (version 1 to 4) are upgraded once, the next time the rules are used: your rules, messages, severities and disabled settings are preserved, and missing checks are added. Version 3 adds `jumpTargets`, which was part of `labels` before; it starts with the same `enabled` and `severity` as your `labels` rule. Version 4 adds `extraColon`. Version 5 adds `descriptions` (as a warning). Save pending rules edits before upgrading.
 
 ### Severity levels
 
@@ -85,6 +85,7 @@ Additional configurable checks:
 | `positions` | Literal `P[n]` references without matching definitions in `/POS` | Error |
 | `motion` | Missing/unrecognized position, speed, or termination fields on J/L/C/A motion instructions | Warning |
 | `calls` | Literal CALL/RUN targets without a matching local LS, TP, or PC filename | Warning |
+| `descriptions` | Inline comments such as `DO[5:Clamp Closed]` that differ from the project's descriptions files, or are not in them (see [Update descriptions while writing a program](#update-descriptions-while-writing-a-program)). Checked live while you edit. Only runs when the project has descriptions. | Warning |
 
 Local calls are searched in the selected file's workspace folder, or its containing directory when outside a workspace. Indirect register-based calls, jumps, and positions cannot be resolved statically; `PR[n]` is not required in `/POS`. Motion checks recognize common numeric/register speeds and FINE/CNT/CR termination, including continuation lines for circular moves. Controller-specific forms may need review. The semicolon rule accepts a line without `;` when the next line continues the instruction (starts with `:` and has no line number), as in two-line circular moves. Line numbers are never validated. These checks do not replace the controller's loader/compiler.
 
@@ -146,6 +147,10 @@ Every check in the rules file works the same way: `"severity"` is `"critical"`, 
 - **Errors found:** a dialog lists the files with errors and warns that **files with errors may fail to load on the robot**. Choose:
   - **Send with Errors**: upload everything anyway.
   - **Show Problems**: cancel and open the Problems panel to fix them.
+  - **Cancel**: do nothing.
+- **LS comments differ from the descriptions** (the `descriptions` rule): a dialog lists each comment typed in the brackets, such as `DO[5:Clamp Closed]`, that does not match the descriptions files. The robot ignores those comments. Choose:
+  - **Save and Send to Robot**: save them to the CSV, upload the LS file(s), then send every description that differs from the robot's comments, in the same connection and without asking again. The comments are read back and checked.
+  - **Send Without Saving**: upload without changing the CSV.
   - **Cancel**: do nothing.
 - The issues stay in the Problems panel either way.
 
@@ -244,6 +249,7 @@ The robot already has comments for its I/O and registers. Copy them into a descr
 | **Get Descriptions from Robot** | You can connect to the robot. Downloads only the five comment files, nothing else. |
 | **Create Descriptions from Backup** | You already have a backup folder (for example from **Get ALL Files from Robot**). Right-click that folder. |
 | **Edit Descriptions** | You want to open a descriptions file and edit it by hand. |
+| **Send Descriptions to Robot** | You changed descriptions in VS Code and want the robot's I/O and register comments to match. |
 
 **Get Descriptions from Robot:**
 
@@ -275,6 +281,46 @@ Downloads from an IP that is not a named robot are not checked, because descript
 | `strreg.va` | `SR` |
 
 Only items with a comment are added. Comments that are only spaces are skipped. If some of these files are missing from the folder, the command uses the ones it finds.
+
+### Update descriptions while writing a program
+
+You do not have to open the CSV to change a description. In an LS file:
+
+- **Type the comment the Fanuc way**, inside the brackets: `DO[5:Clamp Closed]=ON`, `R[10:Pick Number]`, `DO[17: * :Gripper Open]`. When the comment differs from the descriptions files, the LS Verifier's `descriptions` rule marks it with a warning as you type. Press `Ctrl+.` (or click the lightbulb) and choose **Save "Clamp Closed" as the description of DO[5]**.
+- **Set a description from the key:** put the cursor on any `DO[5]` or `R[10]` and press `Ctrl+.` → **Set description of DO[5]…**, or hover over a description and click **Edit description**. Type the new text.
+- **Save all of a file's comments at once:** right-click in the LS file → **Update Descriptions from LS Comments**. Every comment that differs is listed and checked; untick any you do not want.
+
+The description is saved to the file it already comes from (the robot's file or `shared.csv`). A new key goes to the robot's file, or `shared.csv` when the folder has no named robot. Other rows in the CSV are not reordered. After saving, click **Send to Robot** to update the robot's comments too.
+
+Why this matters: the robot does **not** read comments typed inside the brackets. When an LS file is loaded, the robot keeps its own I/O and register comments, and the next download shows those again. Save the comment as a description and send it to the robot, or it is lost.
+
+Comments the robot cut short in a downloaded LS file (`PR[15:Tool Offset Ro]` for *Tool Offset Rotate*) are not marked. Only comments of 12 or more characters are treated as cut short, so shortening `DO[15:newer]` to `DO[15:new]` is still marked. Before an upload, differing comments are listed and you can save them as descriptions first (see [Check before upload](#check-before-upload)). To turn this off, set the `descriptions` rule's `enabled` to `false` in **MNAutomation → LS Checker → Edit LS Verifier Rules** (`ls-verifier-rules.json`).
+
+### Send descriptions to the robot
+
+**MNAutomation → Descriptions → Send Descriptions to Robot** writes your descriptions back to the robot as I/O and register comments.
+
+1. Right-click the robot's folder and run the command. Pick the robot in the IP picker.
+2. The robot's current comments are read over FTP and compared with the robot's file plus `shared.csv` (the robot's file wins for the same key).
+3. A list shows only the rows that differ, for example `DI[2]: "Spare" → "Test Update"`. Choose **Send**.
+4. Each comment is sent, then the comments are read back to check them. A comment that reads back differently was probably too long for the robot's comment field; the Output panel shows the details.
+
+Comments on the robot that are not in your files are not changed, and an empty row does not clear a comment on the robot.
+
+**Reminder after sending LS files:** after **Send This LS File** or **Send Folder**, the robot's comments are read in the same connection and compared with your descriptions (only when the project has descriptions). If some differ, a popup asks:
+
+- **Send Descriptions**: runs **Send Descriptions to Robot** for the same robot, without asking for the IP again.
+- **Not This Session**: does not ask again, for any robot, until VS Code restarts.
+- **Don't Ask Again**: stops asking for every robot in this workspace. **MNAutomation → Reset Reminders** turns it back on.
+
+A failed check never fails the upload; it is only noted in the Output panel.
+
+**How it works:** the comments are sent through `ComSet`, a small KAREL program that comes installed on the controller and backs the robot's web **Comment Tool**. You do not need the KAREL software option. The robot must allow it:
+
+- **Setup → Host Comm → HTTP**: set the **KAREL** entry to unlocked. If it is locked, the robot answers *"Protected feature, cannot issue from here"* and the command stops with that message.
+- The robot's web server must be reachable from your PC on port 80. For RoboGuide or a robot behind port forwarding, set `httpPort` for the robot in **Edit Robot List** (RoboGuide shows its HTTP port in the cell's robot properties; for example `9000`).
+
+Supported: `DI`, `DO`, `RI`, `RO`, `GI`, `GO`, `AI`, `AO`, `R`, `PR` (group 1), `SR`, `F`. `UI` and `UO` comments cannot be set this way; they are listed in the Output panel and skipped.
 
 ### CSV format
 
@@ -380,7 +426,7 @@ Only the commit prompts need Git. Downloads, uploads, the LS checker, descriptio
 - **SVN working copies** (a `.svn` folder in the transfer folder or above it): the extension never offers to create a git repository there. If the folder is also inside a git repository, that repository is still used.
 - To stop all commit prompts in a workspace, set `robotFtp.git.onDownload` and `robotFtp.git.onUpload` to `off`.
 
-**Turning reminders back on:** **MNAutomation → Reset Robot FTP Reminders** turns back on every "Don't Remind Me" / "Don't ask again" choice: the Git warning, and the question to create descriptions for a robot (in the current workspace).
+**Turning reminders back on:** **MNAutomation → Reset Robot FTP Reminders** turns back on every "Don't Remind Me" / "Don't ask again" choice: the Git warning, the question to create descriptions for a robot, and the reminder to send changed descriptions after an upload (in the current workspace).
 
 ### Files git should ignore
 
@@ -430,7 +476,7 @@ Every robot command asks which robot to use. The list comes from `.vscode/robot-
   "robots": [
     { "name": "ST02", "ip": "192.168.1.12", "folder": "Robots/ST02", "port": null },
     { "name": "St04", "ip": "192.168.1.14", "folder": "Robots/St04", "port": 21 },
-    { "name": "RoboGuide", "ip": "127.0.0.2", "folder": null, "port": 9125 }
+    { "name": "RoboGuide", "ip": "127.0.0.2", "folder": null, "port": 9125, "httpPort": 9000 }
   ],
   "recent": ["192.168.1.14", "192.168.1.12"]
 }
@@ -439,6 +485,7 @@ Every robot command asks which robot to use. The list comes from `.vscode/robot-
 - **`robots`**: named robots for the job. They are never removed automatically.
   - `folder` (optional, relative to the workspace folder): when a command runs anywhere inside this folder, this robot is listed first and marked *this folder*. If several folders match, the deepest one wins.
   - `port` (optional): the FTP port for this robot. Leave it out or set it to `null` to use the `robotFtp.port` setting.
+  - `httpPort` (optional): the robot's web server port, used by **Send Descriptions to Robot**. Leave it out for port 80.
 - **`recent`**: the last five IPs used in the project, newest first.
 
 The picker lists, in order: the robot for the current folder, recent IPs (with the robot name when known), the other named robots, the built-in IPs (192.168.10.124, RoboGuide 127.0.0.2), and **Other**. Choosing **Other** lets you type an IP and then save it as a named robot, choosing its folder and port.

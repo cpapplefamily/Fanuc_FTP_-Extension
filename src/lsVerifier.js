@@ -4,6 +4,7 @@ const path = require('path');
 
 // Version 3 (2026-11-16) split "JMP LBL[n] has no matching label" out of "labels" into its own "jumpTargets" rule.
 // Version 4 (2026-11-16) added "extraColon" ("1: :!text ;").
+// Version 5 (2026-11-18) added "descriptions" (inline comments like DO[5:Clamp] that differ from the descriptions files).
 // Severities: "critical" blocks uploads, "error" asks before sending, "warning" never stops an upload.
 const SEVERITIES = ['critical', 'error', 'warning'];
 
@@ -142,7 +143,10 @@ function upgradeRules(text) {
     return JSON.stringify(config, null, 2) + '\n';
 }
 
-function registerLsVerifier(vscode, context, outputChannel) {
+/**
+ * hooks.descriptionsFor(uri) → Map key → text: the descriptions that apply to an LS file (for the "descriptions" check).
+ */
+function registerLsVerifier(vscode, context, outputChannel, hooks = {}) {
     const diagnostics = vscode.languages.createDiagnosticCollection('robotFtpVerifier');
     const rulesUri = vscode.Uri.joinPath(context.globalStorageUri, 'ls-verifier-rules.json');
     const REVISION_KEY = 'robotFtp.lsRulesDefaultsRevision';
@@ -221,9 +225,14 @@ function registerLsVerifier(vscode, context, outputChannel) {
             await vscode.window.showTextDocument(document);
             if (backupUri) {
                 const open = 'Open Backup';
-                if (await vscode.window.showInformationMessage(`LS verifier rules reset to defaults. Your previous rules were saved as ${path.basename(backupUri.fsPath)}.`, open) === open) {
-                    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(backupUri), { preview: false });
-                }
+                // Not awaited: an ignored notification never resolves and would keep the command running.
+                vscode.window.showInformationMessage(`LS verifier rules reset to defaults. Your previous rules were saved as ${path.basename(backupUri.fsPath)}.`, open)
+                    .then(async choice => {
+                        if (choice === open) {
+                            await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(backupUri), { preview: false });
+                        }
+                    })
+                    .then(undefined, error => outputChannel.appendLine(`Open backup: ${error.message}`));
             }
         } catch (error) {
             vscode.window.showErrorMessage(`Could not reset LS verifier rules: ${error.message}`);
@@ -257,20 +266,27 @@ function registerLsVerifier(vscode, context, outputChannel) {
             const self = /^\s*\/PROG\s+(\S+)/m.exec(text);
             if (self) options.localPrograms.push(self[1]);
         }
+        if (hooks.descriptionsFor && rules.some(rule => rule.enabled && rule.check === 'descriptions')) {
+            options.descriptions = hooks.descriptionsFor(uri);
+        }
         return verifyLs(text, rules, options);
     }
+    function toDiagnostic(issue) {
+        // VS Code has no level above Error, so critical findings are Errors labeled "Critical:".
+        const diagnostic = new vscode.Diagnostic(
+            new vscode.Range(issue.line, issue.start, issue.line, issue.end),
+            issue.severity === 'critical' ? `Critical: ${issue.message} (blocks sending to the robot)` : issue.message,
+            issue.severity === 'warning' ? vscode.DiagnosticSeverity.Warning : vscode.DiagnosticSeverity.Error
+        );
+        diagnostic.source = 'LS Verifier';
+        diagnostic.code = issue.code;
+        return diagnostic;
+    }
+    // The "descriptions" check also runs live while editing (see updateDescriptionIssues), so its rule id is remembered
+    // to tell its diagnostics apart from the other checks.
+    let descriptionsRuleId = 'descriptions';
     function showDiagnostics(uri, issues) {
-        diagnostics.set(uri, issues.map(issue => {
-            // VS Code has no level above Error, so critical findings are Errors labeled "Critical:".
-            const diagnostic = new vscode.Diagnostic(
-                new vscode.Range(issue.line, issue.start, issue.line, issue.end),
-                issue.severity === 'critical' ? `Critical: ${issue.message} (blocks sending to the robot)` : issue.message,
-                issue.severity === 'warning' ? vscode.DiagnosticSeverity.Warning : vscode.DiagnosticSeverity.Error
-            );
-            diagnostic.source = 'LS Verifier';
-            diagnostic.code = issue.code;
-            return diagnostic;
-        }));
+        diagnostics.set(uri, issues.map(toDiagnostic));
     }
     const verify = vscode.commands.registerCommand('extension.verifyLsFile', async resourceUri => {
         const uri = resourceUri || vscode.window.activeTextEditor?.document.uri;
@@ -308,11 +324,32 @@ function registerLsVerifier(vscode, context, outputChannel) {
 
     return {
         /**
+         * Runs only the "descriptions" check on an open LS document and shows its findings, keeping the other
+         * checks' findings for the file. Called while editing and when description files change.
+         */
+        async updateDescriptionIssues(document) {
+            let rule;
+            try {
+                rule = parseRules((await ensureRules()).getText()).find(existing => existing.check === 'descriptions');
+            } catch {
+                return; // Invalid rules are reported when the verifier runs.
+            }
+            if (rule) descriptionsRuleId = rule.id;
+            const others = (diagnostics.get(document.uri) || []).filter(diagnostic => diagnostic.code !== descriptionsRuleId);
+            const descriptions = rule?.enabled && hooks.descriptionsFor ? hooks.descriptionsFor(document.uri) : undefined;
+            const issues = descriptions ? runChecks(document.getText(), [rule], { descriptions }) : [];
+            if (others.length === 0 && issues.length === 0) diagnostics.delete(document.uri);
+            else diagnostics.set(document.uri, [...others, ...issues.map(toDiagnostic)]);
+        },
+        /**
          * Checks the saved contents of LS files (what an upload sends) and shows the issues in the Problems panel.
-         * Returns { skipped: true } when no rules are enabled, otherwise { results: [{ uri, issues }] }. Throws on invalid rules.
+         * Returns { skipped: true } when no rules are enabled, otherwise { results: [{ uri, issues }], descriptionsRuleId }
+         * (descriptionsRuleId tells the "descriptions" check's issues apart). Throws on invalid rules.
          */
         async checkFiles(uris) {
             const rules = parseRules((await ensureRules()).getText());
+            const descriptionsRule = rules.find(rule => rule.check === 'descriptions');
+            if (descriptionsRule) descriptionsRuleId = descriptionsRule.id;
             if (!rules.some(rule => rule.enabled)) return { skipped: true, results: [] };
             const cache = new Map();
             const results = [];
@@ -322,7 +359,7 @@ function registerLsVerifier(vscode, context, outputChannel) {
                 showDiagnostics(uri, issues);
                 results.push({ uri, issues });
             }
-            return { skipped: false, results };
+            return { skipped: false, results, descriptionsRuleId };
         }
     };
 }

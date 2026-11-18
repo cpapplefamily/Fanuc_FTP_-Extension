@@ -178,4 +178,41 @@ suite('LS advanced checks', () => {
         const upgradedDisabled = JSON.parse(upgradeRules(JSON.stringify({ version: 2, rules: disabled })));
         assert.strictEqual(upgradedDisabled.rules.find(rule => rule.check === 'jumpTargets').enabled, false);
     });
+
+    test('descriptions: warns about inline comments that differ from the descriptions, on the key only', () => {
+        const descriptions = new Map([['DO[5]', 'Spare'], ['PR[15]', 'Tool Offset Rotate'], ['DO[17]', 'Gripper Open']]);
+        const text = program([
+            '   1:  DO[5:Clamp Closed]=ON ;',
+            '   2:  PR[15:Tool Offset Ro]=LPOS ;',
+            '   3:  DO[17: * :Gripper Open]=OFF ;',
+            '   4:  R[10:New Count]=0 ;',
+            '   5:  !DO[5:in a remark] ;'
+        ].join('\n'));
+        const issues = check(text, { descriptions }).filter(issue => issue.code === 'descriptions');
+        assert.deepStrictEqual(issues.map(issue => [issue.line, issue.severity, text.split('\n')[issue.line].slice(issue.start, issue.end)]), [
+            [5, 'warning', 'DO[5:Clamp Closed]'],
+            [8, 'warning', 'R[10:New Count]']
+        ]);
+        assert.match(issues[0].message, /^LS descriptions: DO\[5\] comment "Clamp Closed" differs from its description "Spare"/);
+        assert.match(issues[1].message, /R\[10\] comment "New Count" is not in the descriptions/);
+        // No descriptions for the project → nothing to compare with.
+        assert.deepStrictEqual(check(text, { descriptions: new Map() }).filter(issue => issue.code === 'descriptions'), []);
+        assert.deepStrictEqual(check(text).filter(issue => issue.code === 'descriptions'), []);
+    });
+
+    test('descriptions: severity comes from the rules file', () => {
+        const asError = advanced.map(rule => rule.check === 'descriptions' ? { ...rule, severity: 'error' } : rule);
+        const issues = verifyLs(program('   1:  DO[5:Clamp]=ON ;'), asError, { fileName: 'MAIN.LS', descriptions: new Map([['DO[5]', 'Spare']]) })
+            .filter(issue => issue.code === 'descriptions');
+        assert.deepStrictEqual(issues.map(issue => issue.severity), ['error']);
+    });
+
+    test('upgrading version 4 rules adds the descriptions check as a warning, keeping the user\'s rules', () => {
+        const v4 = { version: 4, rules: defaults.rules.filter(rule => rule.check !== 'descriptions').map(rule => rule.id === 'motion' ? { ...rule, severity: 'error' } : rule) };
+        const upgraded = JSON.parse(upgradeRules(JSON.stringify(v4)));
+        assert.strictEqual(upgraded.version, defaults.version);
+        assert.deepStrictEqual(upgraded.rules.find(rule => rule.check === 'descriptions'),
+            { id: 'descriptions', enabled: true, check: 'descriptions', severity: 'warning', message: 'LS descriptions:' });
+        assert.strictEqual(upgraded.rules.find(rule => rule.id === 'motion').severity, 'error');
+    });
 });

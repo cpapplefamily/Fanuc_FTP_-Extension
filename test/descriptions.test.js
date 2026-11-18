@@ -8,6 +8,9 @@ const {
     parseDescriptionsCsv,
     mergeDescriptions,
     findDescriptionKeys,
+    findInlineComments,
+    inlineCommentMatches,
+    setDescriptionInCsv,
     getSharedDescriptionsPath,
     getRobotDescriptionsPath,
     ensureDescriptionsFile
@@ -89,5 +92,38 @@ suite('I/O and register descriptions', () => {
         } finally {
             fs.rmSync(root, { recursive: true, force: true });
         }
+    });
+
+    test('finds inline comments in the forms the robot writes, without the I/O state', () => {
+        const pick = line => findInlineComments(line).map(found => [found.key, found.text, line.slice(found.start, found.end)]);
+        assert.deepStrictEqual(pick('   1:  DO[17: * :Gripper Open]=ON ;'), [['DO[17]', 'Gripper Open', 'DO[17: * :Gripper Open]']]);
+        assert.deepStrictEqual(pick('   2:  WAIT (DI[3:OFF:Hold]=ON AND DO[1:ON :Clamp]) ;').map(item => item[1]), ['Hold', 'Clamp']);
+        assert.deepStrictEqual(pick('   3:  R[10:Pick Number]=GI[1:Part ID] ;').map(item => [item[0], item[1]]), [['R[10]', 'Pick Number'], ['GI[1]', 'Part ID']]);
+        assert.deepStrictEqual(pick('   4:  F[2:OFF:Cycle: A]=(ON) ;').map(item => item[1]), ['Cycle: A']);
+        assert.deepStrictEqual(pick('   5:  DO[7:OFF:]=ON ; DO[8]=OFF ; R[1]=GI[1: * ] ;'), []);
+        assert.deepStrictEqual(pick('   6:  !DO[5:in a remark] ;'), []);
+    });
+
+    test('a description that starts with a cut-off LS comment still matches, but a shortened short comment does not', () => {
+        assert.strictEqual(inlineCommentMatches('Tool Offset Ro', 'Tool Offset Rotate'), true);
+        assert.strictEqual(inlineCommentMatches('S201 PIC Y OFF', 'S201 PIC Y OFFST'), true);
+        assert.strictEqual(inlineCommentMatches('new', 'newer'), false);
+        assert.strictEqual(inlineCommentMatches('Gripper Ope', 'Gripper Open'), false);
+        assert.strictEqual(inlineCommentMatches('Clamp', 'Clamp'), true);
+        assert.strictEqual(inlineCommentMatches('Clamp Closed', 'Clamp'), false);
+        assert.strictEqual(inlineCommentMatches('Clamp', undefined), false);
+    });
+
+    test('setDescriptionInCsv changes one row in place, keeps order and CRLF, and appends new keys', () => {
+        const csv = 'Key,Description\r\nDI[1],Air\r\ndi[ 2 ],Spare\r\nDI[3],Hold\r\nDI[2],Duplicate\r\n';
+        assert.strictEqual(setDescriptionInCsv(csv, 'DI[2]', 'Clamp, closed'),
+            'Key,Description\r\nDI[1],Air\r\ndi[ 2 ],"Clamp, closed"\r\nDI[3],Hold\r\n');
+        assert.strictEqual(setDescriptionInCsv(csv, 'R[1]', 'Count').endsWith('DI[2],Duplicate\r\nR[1],Count\r\n'), true);
+        assert.strictEqual(setDescriptionInCsv('', 'R[1]', 'Count'), 'Key,Description\nR[1],Count\n');
+        assert.strictEqual(setDescriptionInCsv('Description,Key\n', 'R[1]', 'Count'), 'Description,Key\nCount,R[1]\n');
+        assert.throws(() => setDescriptionInCsv('Name,Text\n', 'R[1]', 'Count'), /header/);
+        const parsed = parseDescriptionsCsv(setDescriptionInCsv(csv, 'DI[2]', 'Say "hi"')).descriptions;
+        assert.strictEqual(parsed.get('DI[2]'), 'Say "hi"');
+        assert.strictEqual(parsed.size, 3);
     });
 });

@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { csvField } = require('./descriptions');
 
 /**
  * Builds description CSVs from a robot backup ("Get ALL Files from Robot").
@@ -150,10 +151,6 @@ function sortKey(key) {
     const match = /^([A-Z]+)\[(\d+)\]$/.exec(key);
     const order = match ? TYPE_ORDER.indexOf(match[1]) : -1;
     return [order < 0 ? TYPE_ORDER.length : order, match ? Number(match[2]) : 0];
-}
-
-function csvField(value) {
-    return /[",\r\n]/.test(value) || value !== value.trim() ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
 /** Writes Key,Description CSV text, sorted by type (DI, DO, ... R, PR, SR) and then number. */

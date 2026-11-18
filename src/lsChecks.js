@@ -1,6 +1,7 @@
 const { validateProgramName } = require('./renameLs');
+const { findInlineComments, inlineCommentMatches } = require('./descriptions');
 
-const checks = ['sections', 'programName', 'delimiters', 'extraColon', 'labels', 'jumpTargets', 'positions', 'motion', 'calls'];
+const checks = ['sections', 'programName', 'delimiters', 'extraColon', 'labels', 'jumpTargets', 'positions', 'motion', 'calls', 'descriptions'];
 
 // Robot-exported --eg: remarks wrap at about 80 characters. Continuation lines start
 // with a bare ':' (no line number), and only the last line ends with ';'.
@@ -59,10 +60,10 @@ function runChecks(text, rules, options = {}) {
     const issues = [];
     const lines = text.split(/\r?\n/);
     const active = new Map(rules.filter(r => r.enabled && checks.includes(r.check)).map(r => [r.check, r]));
-    function report(check, line, detail) {
+    function report(check, line, detail, start = 0, end = lines[line]?.length || 0) {
         const rule = active.get(check);
         if (!rule) return;
-        issues.push({ line, start: 0, end: lines[line]?.length || 0,
+        issues.push({ line, start, end,
             code: rule.id, severity: rule.severity || (check === 'calls' ? 'warning' : 'error'),
             message: `${rule.message} ${detail}` });
     }
@@ -79,6 +80,18 @@ function runChecks(text, rules, options = {}) {
         const remark = remarkLine(remarkOpen, line);
         remarkOpen = remark.open;
         if (remark.remark) return; // Remark text is free-form, not code.
+        // Inline comments (DO[5:Clamp]) are ignored by the robot when it loads the file; it keeps its own comment.
+        // options.descriptions (Map key → text) holds the project's descriptions; without any, nothing is reported.
+        if (options.descriptions?.size > 0) {
+            for (const found of findInlineComments(line)) {
+                const description = options.descriptions.get(found.key);
+                if (inlineCommentMatches(found.text, description)) continue;
+                report('descriptions', index, description === undefined
+                    ? `${found.key} comment "${found.text}" is not in the descriptions. The robot ignores comments typed here; save it as a description (Ctrl+.) and send it to the robot.`
+                    : `${found.key} comment "${found.text}" differs from its description "${description}". The robot ignores comments typed here; save it as a description (Ctrl+.) and send it to the robot.`,
+                found.start, found.end);
+            }
+        }
         const colon = line.indexOf(':');
         const body = colon < 0 ? line : line.slice(colon + 1);
         // "1: :!text ;" — a second ':' right after the instruction colon; the robot rejects the file.
